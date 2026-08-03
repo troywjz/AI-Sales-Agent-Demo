@@ -1,0 +1,3 @@
+"sku_id","sku_name","sku_alias","sku_type","url","status","target_users","learning_goals","selling_points","delivery","list_price_yuan","deal_price_yuan","currency","discount_policy","policy_notes","tags","notes"
+"demo_course_001","AI 办公提效训练营","提效训练营","course","https://example.com/ai-office","active","职场人;零基础用户;小团队负责人","提升文档效率;优化数据处理;建立个人工作流","场景化练习;任务模板;顾问答疑","录播课+直播实战+资料模板","1999","1699","CNY","演示优惠以人工确认为准","不得承诺保就业、保涨薪或固定效果","AI办公;效率;零基础","公开演示 SKU"
+"demo_service_002","团队 AI 工作流诊断","团队诊断","service","https://example.com/team-workflow","active","小团队负责人;业务管理者","识别重复流程;形成改进清单","场景访谈;流程诊断;改进建议","线上访谈+诊断报告","3999","","CNY","具体报价以需求范围为准","涉及合同、发票和付款时转人工","团队;工作流;咨询","公开演示 SKU"
