@@ -15,8 +15,9 @@ from app.agents import (
 )
 from app.conversation import CustomerProfile
 from app.conversation import ConversationState
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.knowledge import KnowledgeLoader
+from app.knowledge.safety_vector import SafetyVectorReviewer
 from app.llm import LLMClient
 from app.sales_rag import SalesCaseRAGService
 from app.graph.supervisor_router import decide_supervisor_route
@@ -43,11 +44,11 @@ class SalesGraphNodes:
 
     节点执行顺序由 sales_graph.py 中的边定义决定，大致为::
 
-        init → supervisor_router → intent → [sop, knowledge]
+        init → supervisor_router → intent → [sop, knowledge, sales_case_rag]
                                                   ↓ (条件路由)
                               conversation / handover
                                        ↓
-                                    safety
+                              vector safety → SafetyAgent
                                        ↓ (条件路由)
                               final_reply / rewrite_reply / handover
                                        ↓
@@ -60,17 +61,31 @@ class SalesGraphNodes:
         self,
         llm_client: LLMClient,
         knowledge_loader: KnowledgeLoader | None = None,
+        safety_vector_reviewer: SafetyVectorReviewer | None = None,
         sales_case_rag_service: SalesCaseRAGService | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        self.settings = get_settings()
+        self.settings = settings or get_settings()
         self.knowledge_loader = knowledge_loader or KnowledgeLoader()
-        self.sales_case_rag_service = sales_case_rag_service or SalesCaseRAGService(settings=self.settings)
-        self.intent_agent = IntentAgent(llm_client)
-        self.memory_agent = MemoryAgent(llm_client)
-        self.sop_agent = SOPAgent(llm_client)
-        self.knowledge_agent = KnowledgeAgent(llm_client)
-        self.conversation_agent = ConversationAgent(llm_client)
-        self.safety_agent = SafetyAgent(llm_client)
+        self.safety_vector_reviewer = (
+            safety_vector_reviewer
+            if safety_vector_reviewer is not None
+            else SafetyVectorReviewer(settings=self.settings)
+        )
+        self.sales_case_rag_service = (
+            sales_case_rag_service
+            if sales_case_rag_service is not None
+            else SalesCaseRAGService(settings=self.settings)
+        )
+        load_identity = getattr(self.knowledge_loader, "load_business_identity", None)
+        business_identity = load_identity() if callable(load_identity) else None
+        agent_kwargs = {"business_identity": business_identity}
+        self.intent_agent = IntentAgent(llm_client, **agent_kwargs)
+        self.memory_agent = MemoryAgent(llm_client, **agent_kwargs)
+        self.sop_agent = SOPAgent(llm_client, **agent_kwargs)
+        self.knowledge_agent = KnowledgeAgent(llm_client, **agent_kwargs)
+        self.conversation_agent = ConversationAgent(llm_client, **agent_kwargs)
+        self.safety_agent = SafetyAgent(llm_client, **agent_kwargs)
 
     # ── 入口与调度节点 ───────────────────────────────────────
 
@@ -272,7 +287,7 @@ class SalesGraphNodes:
             },
             elapsed_ms=elapsed_ms,
             provider="local",
-            model="keyword-rag",
+            model="sales-case-rag",
         )
         return {"sales_case_references": trimmed, "runs": [run]}
 
@@ -329,6 +344,37 @@ class SalesGraphNodes:
         if hasattr(self.knowledge_loader, "load_safety_rules"):
             safety_rules = self.knowledge_loader.load_safety_rules()
 
+        # 向量审核是 SafetyAgent 前的可选增强层。没有向量数据时，
+        # SafetyVectorReviewer 会直接返回 pass，主链路仍只调用 SafetyAgent。
+        vector_review: dict[str, Any] | None = None
+        if self.settings.safety_vector_enabled:
+            try:
+                vector_review = await self.safety_vector_reviewer.review(
+                    draft_reply=graph_state.get("draft_reply", ""),
+                    session_id=graph_state.get("session_id", ""),
+                    turn_id=graph_state.get("turn_id", ""),
+                    node_name="safety",
+                )
+                if vector_review.get("action") == "revise":
+                    return {
+                        "safety_rules": safety_rules,
+                        "safety": {
+                            "action": "revise",
+                            "source": "vector",
+                            "risks": vector_review.get("risks", []),
+                            "matches": vector_review.get("matches", []),
+                            "vector_review": vector_review,
+                        },
+                    }
+            except Exception as exc:
+                # 向量服务或审计表异常不能让主安全审核失效，继续使用 SafetyAgent。
+                vector_review = {
+                    "enabled": True,
+                    "source_available": True,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                }
+
         run = await self.safety_agent.run(
             {
                 "message": _require_message(graph_state),
@@ -341,6 +387,8 @@ class SalesGraphNodes:
             }
         )
         safety = _as_dict(run.output)
+        if vector_review:
+            safety["vector_review"] = vector_review
         return {"safety_rules": safety_rules, "safety": safety, "runs": [run]}
 
     # ── 分支节点（条件路由后的目标节点） ──────────────────────
@@ -626,9 +674,15 @@ def _normalize_sop_stage(
     return ""
 
 
-def serialize_run(run: AgentRunResult) -> dict[str, Any]:
+def serialize_run(
+    run: AgentRunResult,
+    *,
+    include_llm_call_details: bool = False,
+) -> dict[str, Any]:
     """将 Agent 运行记录序列化为字典，用于日志和 API 响应。"""
     data = asdict(run)
+    if include_llm_call_details:
+        return data
     # API 只返回 LLM 尝试摘要；完整请求/响应已写入 llm_calls 表，避免流式事件过大。
     data["llm_call_attempts"] = [
         {

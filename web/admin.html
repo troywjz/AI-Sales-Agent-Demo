@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sales Agent 管理员端</title>
     <link rel="icon" href="/favicon.ico?v=20260507" type="image/svg+xml" />
-    <link rel="stylesheet" href="/static/admin.css?v=20260623-admin-auth" />
+    <link rel="stylesheet" href="/static/admin.css?v=windows-demo-config-v2" />
   </head>
   <body>
     <section id="adminLoginView" class="admin-login-view" aria-label="管理员登录">
@@ -30,7 +30,7 @@
       </form>
     </section>
 
-    <header class="admin-header">
+    <header class="admin-header" hidden>
       <div class="brand">
         <img src="/favicon.ico?v=20260507" alt="" />
         <div>
@@ -45,7 +45,7 @@
       </nav>
     </header>
 
-    <main class="admin-layout">
+    <main class="admin-layout" hidden>
       <section class="toolbar" aria-label="时间范围">
         <div>
           <h2>效果大屏</h2>
@@ -56,6 +56,21 @@
           <button type="button" data-range="7d" class="active">最近7天</button>
           <button type="button" data-range="30d">最近30天</button>
         </div>
+      </section>
+
+      <section class="panel admin-config-panel" aria-label="运行配置">
+        <header>
+          <div>
+            <h2>运行配置</h2>
+            <span id="adminConfigPath">仅显示可安全修改的配置</span>
+          </div>
+          <div class="config-actions">
+            <button id="saveConfigButton" type="button">保存配置</button>
+            <button id="restartServiceButton" type="button">重启服务</button>
+          </div>
+        </header>
+        <div id="adminConfigForm" class="config-grid"></div>
+        <p id="adminConfigStatus" class="config-status" aria-live="polite"></p>
       </section>
 
       <section id="summaryCards" class="summary-grid" aria-label="核心指标"></section>
@@ -145,6 +160,6 @@
 
     </main>
 
-    <script src="/static/admin.js?v=windows-demo"></script>
+    <script src="/static/admin.js?v=windows-demo-config-v2"></script>
   </body>
 </html>

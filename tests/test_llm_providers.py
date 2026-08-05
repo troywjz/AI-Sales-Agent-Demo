@@ -1,7 +1,9 @@
 from app.core.config import Settings
 from app.llm.base import ChatMessage, LLMProviderError, LLMResponse
 from app.llm.fallback_client import FallbackLLMClient
-from app.llm.providers import build_llm_fallback_configs
+from app.llm.http_client import HttpLLMClient
+from app.llm.providers import LLMProtocol, LLMProviderConfig, build_llm_fallback_configs
+import pytest
 
 
 def test_baiduqianfan_provider_is_available_first() -> None:
@@ -209,3 +211,38 @@ def test_fallback_client_treats_invalid_json_as_failed_attempt() -> None:
     assert [attempt.success for attempt in response.call_attempts] == [False, True]
     assert response.call_attempts[0].error_type == "JSONDecodeError"
     assert "Invalid JSON response" in response.call_attempts[0].error_message
+
+
+def test_http_client_rejects_reasoning_only_response_for_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = LLMProviderConfig(
+        provider="test-provider",
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="test-model",
+        protocol=LLMProtocol.openai_chat,
+        timeout_seconds=1,
+    )
+    client = HttpLLMClient(config)
+
+    async def reasoning_only_response(*_args, **_kwargs):
+        return {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "internal reasoning",
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_post_json", reasoning_only_response)
+
+    import asyncio
+
+    with pytest.raises(LLMProviderError, match="reasoning-only response"):
+        asyncio.run(client.chat([ChatMessage(role="user", content="test")]))

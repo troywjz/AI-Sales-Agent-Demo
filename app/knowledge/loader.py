@@ -21,8 +21,17 @@ from app.db.session import SessionLocal
 
 
 class KnowledgeLoader:
-    def __init__(self, knowledge_dir: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        knowledge_dir: Path | str | None = None,
+        *,
+        business_dir: Path | str | None = None,
+        use_database: bool = True,
+    ) -> None:
         self.knowledge_dir = Path(knowledge_dir) if knowledge_dir else PROJECT_ROOT / "data" / "knowledge"
+        self.business_dir = Path(business_dir) if business_dir else PROJECT_ROOT / "data" / "business"
+        # 评测快照可显式关闭数据库，避免正式知识内容混入评测。
+        self.use_database = use_database
 
     def load_context(self) -> dict[str, Any]:
         """加载回合初始化所需的轻量知识上下文。
@@ -40,6 +49,14 @@ class KnowledgeLoader:
             "faq": "",
         }
 
+    def load_business_identity(self) -> str:
+        """读取所有 Agent 共用的业务身份说明。"""
+        for filename in ("identity.md", "identity.example.md"):
+            path = self.business_dir / filename
+            if path.exists():
+                return path.read_text(encoding="utf-8").strip()
+        return ""
+
     def query_context(
         self,
         *,
@@ -56,10 +73,14 @@ class KnowledgeLoader:
             intent=intent or {},
             current_stage=current_stage,
         )
-        db_context = self._query_context_from_db(
-            message=message,
-            current_stage=current_stage,
-            selected_sources=selected_sources,
+        db_context = (
+            self._query_context_from_db(
+                message=message,
+                current_stage=current_stage,
+                selected_sources=selected_sources,
+            )
+            if self.use_database
+            else None
         )
         if db_context is not None:
             return db_context
@@ -71,7 +92,11 @@ class KnowledgeLoader:
 
     def query_sop_docs(self, *, message: str, current_stage: str = "开场") -> dict[str, Any]:
         """为 SOPAgent 单独读取 SOP 子集。"""
-        db_sop = self._query_sop_from_db(message=message, current_stage=current_stage, limit=8)
+        db_sop = (
+            self._query_sop_from_db(message=message, current_stage=current_stage, limit=8)
+            if self.use_database
+            else None
+        )
         if db_sop is not None:
             return self._organize_sop_by_stage(db_sop)
         sop_rows = self._load_csv("sop.csv") or self._load_csv("sop.example.csv")
@@ -79,19 +104,20 @@ class KnowledgeLoader:
 
     def list_sop_stages(self, *, include_terminal: bool = False) -> list[str]:
         """按 knowledge_sop.stage 去重返回销售阶段列表，供后端约束和前端展示使用。"""
-        try:
-            with SessionLocal() as db:
-                rows = db.scalars(select(KnowledgeSOP)).all()
-                if rows:
-                    sorted_rows = sorted(rows, key=_sop_row_order)
-                    stages = _dedupe_sop_stages(
-                        (row.stage for row in sorted_rows),
-                        include_terminal=include_terminal,
-                    )
-                    if stages:
-                        return stages
-        except SQLAlchemyError:
-            pass
+        if self.use_database:
+            try:
+                with SessionLocal() as db:
+                    rows = db.scalars(select(KnowledgeSOP)).all()
+                    if rows:
+                        sorted_rows = sorted(rows, key=_sop_row_order)
+                        stages = _dedupe_sop_stages(
+                            (row.stage for row in sorted_rows),
+                            include_terminal=include_terminal,
+                        )
+                        if stages:
+                            return stages
+            except SQLAlchemyError:
+                pass
 
         sop_rows = self._load_csv("sop.csv") or self._load_csv("sop.example.csv")
         sorted_rows = sorted(sop_rows, key=_sop_mapping_order)
@@ -107,28 +133,29 @@ class KnowledgeLoader:
         )
 
     def load_catalog(self) -> list[dict[str, Any]]:
-        try:
-            with SessionLocal() as db:
-                rows = db.scalars(
-                    select(KnowledgeList)
-                    .where(KnowledgeList.status == "active")
-                    .order_by(KnowledgeList.knowledge_key)
-                ).all()
-                if rows:
-                    return [
-                        {
-                            "knowledge_key": row.knowledge_key,
-                            "table_name": row.table_name,
-                            "display_name": row.display_name,
-                            "description": row.description,
-                            "use_when": row.use_when,
-                            "do_not_use_when": row.do_not_use_when,
-                            "query_hints": _json_loads(row.query_hints_json, []),
-                        }
-                        for row in rows
-                    ]
-        except SQLAlchemyError:
-            pass
+        if self.use_database:
+            try:
+                with SessionLocal() as db:
+                    rows = db.scalars(
+                        select(KnowledgeList)
+                        .where(KnowledgeList.status == "active")
+                        .order_by(KnowledgeList.knowledge_key)
+                    ).all()
+                    if rows:
+                        return [
+                            {
+                                "knowledge_key": row.knowledge_key,
+                                "table_name": row.table_name,
+                                "display_name": row.display_name,
+                                "description": row.description,
+                                "use_when": row.use_when,
+                                "do_not_use_when": row.do_not_use_when,
+                                "query_hints": _json_loads(row.query_hints_json, []),
+                            }
+                            for row in rows
+                        ]
+            except SQLAlchemyError:
+                pass
         return [
             {
                 "knowledge_key": "skus",
@@ -161,27 +188,52 @@ class KnowledgeLoader:
 
     def load_safety_rules(self) -> dict[str, Any]:
         """读取风控规则。该方法只应由 SafetyAgent 链路使用。"""
-        try:
-            with SessionLocal() as db:
-                rows = db.scalars(select(KnowledgeSafetyRule).order_by(KnowledgeSafetyRule.rule_id)).all()
-                if rows:
-                    return {
-                        "source": "knowledge_safety_rules",
-                        "rules": [
-                            {
-                                "level": row.level,
-                                "primary_category": row.primary_category,
-                                "secondary_category": row.secondary_category,
-                                "standard": row.standard,
-                                "violation": row.violation,
-                                "handling_result": row.handling_result,
-                            }
-                            for row in rows
-                        ],
-                    }
-        except SQLAlchemyError:
-            pass
-        return self._load_json("safety_rules.json", default={})
+        if self.use_database:
+            try:
+                with SessionLocal() as db:
+                    rows = db.scalars(select(KnowledgeSafetyRule).order_by(KnowledgeSafetyRule.rule_id)).all()
+                    if rows:
+                        return {
+                            "source": "knowledge_safety_rules",
+                            "rules": [
+                                {
+                                    "level": row.level,
+                                    "primary_category": row.primary_category,
+                                    "secondary_category": row.secondary_category,
+                                    "standard": row.standard,
+                                    "violation": row.violation,
+                                    "handling_result": row.handling_result,
+                                }
+                                for row in rows
+                            ],
+                        }
+            except SQLAlchemyError:
+                pass
+        rows = self._load_csv("safety_rules.csv") or self._load_csv(
+            "safety_rules.example.csv"
+        )
+        if not rows:
+            return {}
+        return {
+            "source": "safety_rules_csv",
+            "rules": [
+                {
+                    "level": str(row.get("level") or row.get("等级") or ""),
+                    "primary_category": str(
+                        row.get("primary_category") or row.get("一级类别") or ""
+                    ),
+                    "secondary_category": str(
+                        row.get("secondary_category") or row.get("二级类别") or ""
+                    ),
+                    "standard": str(row.get("standard") or row.get("标准") or ""),
+                    "violation": str(row.get("violation") or row.get("违规") or ""),
+                    "handling_result": str(
+                        row.get("handling_result") or row.get("处理结果") or ""
+                    ),
+                }
+                for row in rows
+            ],
+        }
 
     def select_knowledge_sources(
         self,
@@ -241,7 +293,12 @@ class KnowledgeLoader:
             skus = self._rank_rows(self._load_csv("skus.csv") or self._load_csv("skus.example.csv"), message, limit=3)
             skus = [_normalize_sku_row(row) for row in skus]
         sop_rows = self._rank_rows(self._load_csv("sop.csv") or self._load_csv("sop.example.csv"), message, limit=8)
-        faq = self._load_text("faq.md") or self._load_text("faq.example.md")
+        faq_rows = self._rank_rows(
+            self._load_csv("faq.csv") or self._load_csv("faq.example.csv"),
+            message,
+            limit=6,
+        )
+        faq = _format_faq_rows([_normalize_faq_row(row) for row in faq_rows])
         return {
             "selected_knowledge_sources": selected_sources,
             "skus": skus,
@@ -358,18 +415,6 @@ class KnowledgeLoader:
             return [item.strip() for item in re.split(r"[;；]", text) if item.strip()]
         return text
 
-    def _load_json(self, filename: str, default: Any) -> Any:
-        path = self.knowledge_dir / filename
-        if not path.exists():
-            return default
-        return json.loads(path.read_text(encoding="utf-8"))
-
-    def _load_text(self, filename: str) -> str:
-        path = self.knowledge_dir / filename
-        if not path.exists():
-            return ""
-        return path.read_text(encoding="utf-8")
-
     def _rank_rows(self, rows: list[dict[str, Any]], message: str, *, limit: int) -> list[dict[str, Any]]:
         terms = _terms(message)
         ranked = sorted(
@@ -386,7 +431,22 @@ def _needs_sku(message: str, intent_text: str) -> bool:
 
 
 def _needs_faq(message: str, intent_text: str) -> bool:
-    keywords = ("报名", "证书", "考试", "考证", "怎么考", "流程", "退款", "发票", "上课", "交付", "时间", "条件", "资格")
+    keywords = (
+        "报名",
+        "证书",
+        "考试",
+        "考证",
+        "怎么考",
+        "流程",
+        "退款",
+        "发票",
+        "上课",
+        "交付",
+        "时间",
+        "条件",
+        "资格",
+        "零基础",
+    )
     return any(keyword in message or keyword in intent_text for keyword in keywords)
 
 
@@ -479,6 +539,25 @@ def _normalize_sku_row(row: dict[str, Any]) -> dict[str, Any]:
     if "price_cents" in normalized and "list_price_yuan" not in normalized:
         normalized["list_price_yuan"] = normalized.pop("price_cents")
     return normalized
+
+
+def _normalize_faq_row(row: dict[str, Any]) -> dict[str, str]:
+    return {
+        "title": str(
+            row.get("title")
+            or row.get("问题")
+            or row.get("question")
+            or row.get("标题")
+            or ""
+        ),
+        "content": str(
+            row.get("content")
+            or row.get("答案")
+            or row.get("answer")
+            or row.get("回答")
+            or ""
+        ),
+    }
 
 
 def _json_loads(text: str, default: Any) -> Any:

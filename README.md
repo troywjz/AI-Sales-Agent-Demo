@@ -13,7 +13,7 @@ Copy-Item .env.example .env
 notepad .env
 ```
 
-已有完整项目数据库时，可将 `DATABASE_URL` 指向现有 `sales_agent` 数据库，并保持 `DEMO_SEED_DATA=false`、`KNOWLEDGE_AUTO_IMPORT=false`，避免写入演示数据。
+Windows Demo 始终只连接独立的 `sales_agent_demo` 数据库，不要把 `DATABASE_URL` 指向 Linux 项目的 `sales_agent`。数据库不会脱离 Docker 运行：可只启动 Docker Desktop 中的 PostgreSQL，再在 Windows Python 中运行 FastAPI。`DATABASE_CONNECT_TIMEOUT_SECONDS` 同时控制正式服务、启动脚本与评估回放的数据库首次连接等待，默认 5 秒。
 
 双击根目录的 `start_demo.cmd`，或在 PowerShell 中运行：
 
@@ -21,7 +21,7 @@ notepad .env
 .\start_demo.cmd
 ```
 
-首次启动会自动创建 `.venv`、安装依赖，并在目标名称包含 `demo` 时创建 PostgreSQL 演示库、数据表和公开样例数据。数据库账号需要具有建库权限；无建库权限时请先由管理员创建 `.env` 中指定的数据库。看到访问地址后，在浏览器打开：
+首次启动会自动创建 `.venv`、安装依赖，并在目标库为 `sales_agent_demo` 时创建 PostgreSQL 演示库、数据表和公开样例数据。数据库账号需要具有建库权限；无建库权限时请先由管理员创建 `.env` 中指定的数据库。看到访问地址后，在浏览器打开：
 
 - 销售端：<http://127.0.0.1:8000/sales>
 - 客户模拟端：<http://127.0.0.1:8000/customer>
@@ -48,17 +48,17 @@ notepad .env
 - LangGraph 多 Agent 编排与并行上下文检索
 - 基于客户意图和画像的 SOP 阶段推进
 - SKU、FAQ、SOP 本地知识库匹配
-- 本地销售案例 RAG 与注入效果统计
+- 可选向量安全审核与销售案例 RAG；没有向量数据时自动跳过增强层
 - 回复风控、转人工和客户长期记忆
 - 销售端、客户模拟端、管理员效果大屏
 - WebSocket 实时同步、定时发送与自动跟进
-- PostgreSQL 持久化和无密钥本地演示模型
+- PostgreSQL 持久化和真实模型优先、无真实配置时自动回落的 Demo 模型
 
 ## 演示数据
 
-仓库只包含可公开的通用示例数据。默认 `DEMO_SEED_DATA=true`，首次启动会自动把这些数据写入名称包含 `demo` 的 PostgreSQL 数据库。
+仓库只包含明确标注的通用演示夹具。它们只用于功能演示，不来自历史聊天，也不能作为效果评估证据。默认 `DEMO_SEED_DATA=true`，首次启动会自动把这些数据写入独立的 `sales_agent_demo` PostgreSQL 数据库。
 
-销售案例 RAG 使用 `app/demo_data.py` 内置的 4 条通用演示案例，启动时写入 PostgreSQL 的 `sales_rag_chunks` 表，再由本地检索逻辑提供话术参考。它不读取真实聊天记录，也不读取 `data/chat`；`data/knowledge/*.example.*` 仅用于公开的通用知识示例。
+销售案例 RAG 使用 PostgreSQL `sales_rag_chunks` 中的案例向量。公开示例会导入结构化的 `sales_cases.example.csv`，但默认 `SALES_RAG_ENABLED=false`，因此不会调用 Embedding 或执行案例检索；写入来源明确且获授权的 `data/knowledge/sales_cases.csv`、建立向量并开启开关后才会检索。它不读取真实聊天记录，也不读取 `data/chat`；`data/knowledge/*.example.csv` 仅用于公开的通用知识示例。
 
 需要手动补齐或重复检查演示数据时，运行：
 
@@ -66,11 +66,11 @@ notepad .env
 .\scripts\seed_demo_data.ps1
 ```
 
-程序会拒绝向名称不包含 `demo` 的数据库写入演示数据，避免污染现有业务库。
+程序会拒绝向任何不是 `sales_agent_demo` 的数据库写入演示数据，避免连接或污染 Linux 生产库。
 
-## 接入真实模型
+## 模型与向量配置
 
-默认 `DEMO_MODE=true`，不调用外部模型，也不需要 API Key。需要体验真实模型时，编辑本地 `.env`：
+默认优先尝试真实模型配置；如果所有真实供应商都缺少 API Key 或模型名，则自动使用本地 Demo 模型。编辑本地 `.env` 填写任意一组真实供应商配置：
 
 ```dotenv
 DEMO_MODE=false
@@ -81,11 +81,18 @@ DEEPSEEK_MODEL=你的模型名
 
 重新启动项目后生效。`.env` 已被 Git 忽略，请勿提交密钥。
 
+安全向量审核和销售案例 RAG 都是可选增强层。它们只有在对应开关打开且 `knowledge_safety_rules` 或 `sales_rag_chunks` 存在向量数据时才会调用 Embedding；没有向量数据时，安全审核只使用 `SafetyAgent`，销售案例 RAG 不返回案例。
+
+## 生产链路评估回放
+
+`evaluation/` 使用当前 `.env` 的模型与运行配置，直接复用正式 `SalesGraphService` 回放脱敏对话轮次。它不启动前端，也不将会话或运行记录写入数据库；知识、SOP、风控和销售案例只读取 `evaluation/knowledge_snapshot/`，与正式 `data/` 和正式数据库隔离。结果写入本地 UTF-8 CSV。数据契约、评分方法和边界见 [evaluation/docs/README.md](evaluation/docs/README.md)。
+
 ## 项目结构
 
 ```text
 app/        FastAPI、LangGraph、Agent、数据库和演示数据
-data/       可公开的业务、知识库与评估样例
+data/       可公开的演示业务与知识样例
+evaluation/ 并发评测入口、盲评计分工具和说明；本地数据集与运行结果不进入 Git
 prompts/    各 Agent 的 UTF-8 提示词
 scripts/    Windows 初始化、启动和演示数据脚本
 tests/      核心流程测试

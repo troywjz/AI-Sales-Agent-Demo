@@ -195,6 +195,102 @@ button {
   color: #fff;
 }
 
+.admin-config-panel {
+  min-height: 0;
+}
+
+.admin-config-panel header > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.config-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.config-actions button:first-child {
+  border-color: rgba(15, 118, 110, 0.35);
+  background: var(--accent);
+  color: #fff;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.config-group-title {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.config-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.config-field span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.config-field input {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  background: #fff;
+}
+
+.config-field input[type="checkbox"] {
+  width: 16px;
+  min-height: 16px;
+  accent-color: var(--accent);
+}
+
+.config-field small {
+  min-height: 28px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.config-status {
+  min-height: 18px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.config-status.error {
+  color: var(--danger);
+}
+
+.config-status.success {
+  color: var(--accent-strong);
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -417,6 +513,10 @@ button {
 }
 
 @media (max-width: 1100px) {
+  .config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -437,9 +537,14 @@ button {
 @media (max-width: 720px) {
   .admin-header,
   .toolbar,
-  .section-title {
+  .section-title,
+  .admin-config-panel header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .config-grid {
+    grid-template-columns: 1fr;
   }
 
   .summary-grid {

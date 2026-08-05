@@ -24,6 +24,7 @@ from app.db.models import (
     KnowledgeSafetyRule,
 )
 from app.db.session import SessionLocal
+from app.sales_rag.importer import index_sales_case_embeddings_sync, replace_sales_cases
 
 
 CATALOG_ITEMS = {
@@ -52,7 +53,7 @@ CATALOG_ITEMS = {
         "use_when": "客户询问考试、报名、证书、流程、学习方式、发票、退款等具体知识时使用。",
         "do_not_use_when": "不用于读取风控禁词和安全审核规则。",
         "query_hints": ["报名", "证书", "考试", "流程", "退款", "发票", "上课", "学习"],
-        "source_path": "data/knowledge/faq.md",
+        "source_path": "data/knowledge/faq.csv",
     },
     "safety_rules": {
         "table_name": "knowledge_safety_rules",
@@ -61,7 +62,7 @@ CATALOG_ITEMS = {
         "use_when": "仅 SafetyAgent 审核草稿回复时使用。",
         "do_not_use_when": "KnowledgeAgent 知识检索阶段不要使用，避免把风控规则当作客户问题答案。",
         "query_hints": ["包过", "保证", "承诺", "退款", "违规", "敏感", "风控"],
-        "source_path": "data/safety_rules/销售话术管理规定（V5.0版）.pdf",
+        "source_path": "data/knowledge/safety_rules.csv",
     },
 }
 
@@ -89,25 +90,46 @@ def import_knowledge_sources(
         if use_example_sources:
             sku_path = _first_existing(knowledge_path, "skus.example.csv")
             sop_path = _first_existing(knowledge_path, "sop.example.csv")
-            faq_path = _first_existing(knowledge_path, "faq.example.md")
+            faq_path = _first_existing(knowledge_path, "faq.example.csv")
+            safety_rule_path = _first_existing(knowledge_path, "safety_rules.example.csv")
+            sales_case_path = _first_existing(knowledge_path, "sales_cases.example.csv")
         else:
             sku_path = _first_existing(knowledge_path, "skus.csv", "skus.example.csv")
             sop_path = _first_existing(knowledge_path, "sop.csv", "sop.example.csv")
-            faq_path = _first_existing(knowledge_path, "faq.md", "faq.example.md")
+            faq_path = _first_existing(knowledge_path, "faq.csv", "faq.example.csv")
+            sales_case_path = _first_existing(
+                knowledge_path,
+                "sales_cases.csv",
+                "sales_cases.example.csv",
+            )
+            safety_rule_path = _first_existing(
+                knowledge_path,
+                "safety_rules.csv",
+                "safety_rules.example.csv",
+            )
+            if safety_rule_path is None:
+                safety_rule_path = _first_existing(
+                    safety_path,
+                    "knowledge_safety_rules.csv",
+                    "safety_rules.csv",
+                    "销售话术管理规定（V5.0版）.pdf",
+                )
 
         imported["skus"] = _replace_skus(session, sku_path)
         imported["sop"] = _replace_sop(session, sop_path)
         imported["faq"] = _replace_faq(session, faq_path)
         imported["safety_rules"] = (
-            _replace_safety_rules(
-                session,
-                safety_path / "销售话术管理规定（V5.0版）.pdf",
-            )
+            _replace_safety_rules(session, safety_rule_path)
             if include_safety_rules
             else 0
         )
+        imported["sales_cases"] = replace_sales_cases(session, sales_case_path)
+        if sales_case_path:
+            _record_import(session, "sales_cases", sales_case_path, imported["sales_cases"])
         if owns_session:
             session.commit()
+            # 向量索引只由正式配置开启；评测回放只读取已建好的索引，绝不在运行时补写。
+            imported["sales_cases_indexed"] = index_sales_case_embeddings_sync()
         return imported
     except Exception:
         if owns_session:
@@ -222,32 +244,41 @@ def _replace_sop(db: Session, path: Path | None) -> int:
 def _replace_faq(db: Session, path: Path | None) -> int:
     if not path:
         return 0
-    text = path.read_text(encoding="utf-8")
-    sections = _split_markdown_sections(text)
+    rows = _read_csv(path)
     db.execute(delete(KnowledgeFAQ))
-    for index, section in enumerate(sections, start=1):
-        title = section["title"] or f"FAQ {index}"
-        content = section["content"]
+    count = 0
+    for index, row in enumerate(rows, start=1):
+        faq_id = str(_first_value(row, "faq_id", "FAQ ID", "id") or f"faq-{index}")
+        title = str(_first_value(row, "title", "问题", "question", "标题") or f"FAQ {index}")
+        content = str(_first_value(row, "content", "答案", "answer", "回答") or "")
+        if not content:
+            raise ValueError(f"FAQ 第 {index} 行缺少 content")
+        tags = _split_list(_first_value(row, "tags", "标签"))
+        source_section = str(
+            _first_value(row, "source_section", "分类", "category", "章节") or title
+        )
         db.add(
             KnowledgeFAQ(
-                faq_id=f"faq-{index}",
+                faq_id=faq_id,
                 title=title[:255],
                 content=content,
-                tags_json="[]",
-                source_section=title,
-                raw_json=_json(section),
+                tags_json=_json(tags),
+                source_section=source_section,
+                raw_json=_json(row),
                 search_text=f"{title}\n{content}",
             )
         )
-    _record_import(db, "faq", path, len(sections))
-    return len(sections)
+        count += 1
+    _record_import(db, "faq", path, count)
+    return count
 
 
-def _replace_safety_rules(db: Session, path: Path) -> int:
-    manual_csv = _first_existing(path.parent, "knowledge_safety_rules.csv", "safety_rules.csv")
-    if manual_csv:
-        rows = _read_safety_rule_csv(manual_csv)
-        source_path = manual_csv
+def _replace_safety_rules(db: Session, path: Path | None) -> int:
+    if path is None:
+        return 0
+    if path.suffix.lower() == ".csv":
+        rows = _read_safety_rule_csv(path)
+        source_path = path
     elif path.exists():
         rows = _read_safety_rule_table(path)
         source_path = path
@@ -524,23 +555,6 @@ def _read_csv(path: Path) -> list[dict[str, Any]]:
             for row in reader
             if row
         ]
-
-
-def _split_markdown_sections(text: str) -> list[dict[str, str]]:
-    sections: list[dict[str, str]] = []
-    current_title = ""
-    current_lines: list[str] = []
-    for line in text.splitlines():
-        if line.startswith("#"):
-            if current_lines or current_title:
-                sections.append({"title": current_title, "content": "\n".join(current_lines).strip()})
-            current_title = line.lstrip("#").strip()
-            current_lines = []
-        else:
-            current_lines.append(line)
-    if current_lines or current_title:
-        sections.append({"title": current_title, "content": "\n".join(current_lines).strip()})
-    return [section for section in sections if section["title"] or section["content"]]
 
 
 def _chunk_text(text: str, *, max_chars: int) -> Iterable[str]:

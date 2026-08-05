@@ -11,6 +11,10 @@ def test_windows_demo_defaults_to_postgresql() -> None:
     assert settings.database_url.startswith("postgresql+psycopg://")
     assert "sales_agent_demo" in settings.database_url
     assert settings.demo_seed_data is True
+    assert settings.demo_mode is False
+    assert settings.llm_provider == "minimax"
+    assert settings.database_connect_timeout_seconds == 5
+    assert settings.evaluation_max_concurrency == 3
 
 
 def test_demo_mode_uses_local_llm() -> None:
@@ -22,6 +26,33 @@ def test_demo_mode_uses_local_llm() -> None:
     )
 
     assert isinstance(create_llm_client(settings), DemoLLMClient)
+
+
+def test_missing_real_model_configuration_uses_demo_fallback() -> None:
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+psycopg://user:pass@127.0.0.1:5432/sales_agent_demo",
+        DEMO_MODE=False,
+        LLM_PROVIDER="minimax",
+        LLM_PROVIDER_FALLBACK="deepseek",
+    )
+
+    assert isinstance(create_llm_client(settings), DemoLLMClient)
+
+
+def test_configured_real_model_is_selected_before_demo() -> None:
+    settings = Settings(
+        _env_file=None,
+        DATABASE_URL="postgresql+psycopg://user:pass@127.0.0.1:5432/sales_agent_demo",
+        DEMO_MODE=False,
+        LLM_PROVIDER="deepseek",
+        DEEPSEEK_API_KEY="test-key",
+        DEEPSEEK_MODEL="deepseek-chat",
+    )
+
+    from app.llm import FallbackLLMClient
+
+    assert isinstance(create_llm_client(settings), FallbackLLMClient)
 
 
 def test_demo_seed_rejects_non_demo_database() -> None:

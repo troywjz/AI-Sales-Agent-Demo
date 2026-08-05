@@ -20,6 +20,11 @@ const ragTrendChart = document.querySelector("#ragTrendChart");
 const ragComparison = document.querySelector("#ragComparison");
 const ragRecentTable = document.querySelector("#ragRecentTable");
 const rangeButtons = document.querySelectorAll("[data-range]");
+const adminConfigPath = document.querySelector("#adminConfigPath");
+const adminConfigForm = document.querySelector("#adminConfigForm");
+const adminConfigStatus = document.querySelector("#adminConfigStatus");
+const saveConfigButton = document.querySelector("#saveConfigButton");
+const restartServiceButton = document.querySelector("#restartServiceButton");
 
 const SERIES_COLORS = ["#0f766e", "#2563eb", "#f59e0b", "#16a34a", "#dc2626", "#7c3aed"];
 const PIE_COLORS = ["#0f766e", "#2563eb", "#f59e0b", "#16a34a", "#dc2626", "#64748b"];
@@ -170,6 +175,95 @@ async function loadSalesRagDashboard(bucket) {
   renderLineChart(ragTrendChart, timeseries.series || []);
   renderRagComparison(comparison.groups || []);
   renderRagRecentTable(recent.items || []);
+}
+
+async function loadAdminConfig() {
+  const payload = await fetchJson("/api/admin/config");
+  adminConfigPath.textContent = `配置文件：${payload.env_file || ".env"}`;
+  renderAdminConfig(payload.items || []);
+}
+
+function renderAdminConfig(items) {
+  adminConfigForm.innerHTML = "";
+  let currentGroup = "";
+  for (const item of items) {
+    if (item.group !== currentGroup) {
+      currentGroup = item.group;
+      const groupTitle = document.createElement("div");
+      groupTitle.className = "config-group-title";
+      groupTitle.textContent = currentGroup;
+      adminConfigForm.appendChild(groupTitle);
+    }
+    const field = document.createElement("label");
+    field.className = "config-field";
+    const label = document.createElement("span");
+    label.textContent = item.label || item.key;
+    field.appendChild(label);
+    const input = document.createElement("input");
+    input.dataset.configKey = item.key;
+    input.dataset.configType = item.type || "string";
+    input.title = item.description || item.key;
+    if (item.type === "bool") {
+      input.type = "checkbox";
+      input.checked = ["true", "1", "yes", "on"].includes(String(item.value).toLowerCase());
+    } else {
+      input.type = item.type === "int" || item.type === "float" ? "number" : "text";
+      if (input.type === "number") {
+        input.step = item.type === "float" ? "0.1" : "1";
+        input.min = "0";
+      }
+      input.value = item.value ?? "";
+    }
+    field.appendChild(input);
+    const description = document.createElement("small");
+    description.textContent = item.description || "";
+    field.appendChild(description);
+    adminConfigForm.appendChild(field);
+  }
+}
+
+function readAdminConfig() {
+  const updates = {};
+  adminConfigForm.querySelectorAll("[data-config-key]").forEach((input) => {
+    const key = input.dataset.configKey;
+    updates[key] = input.dataset.configType === "bool" ? input.checked : input.value;
+  });
+  return updates;
+}
+
+function setConfigStatus(message, kind = "") {
+  adminConfigStatus.textContent = message;
+  adminConfigStatus.className = `config-status${kind ? ` ${kind}` : ""}`;
+}
+
+async function saveAdminConfig() {
+  saveConfigButton.disabled = true;
+  setConfigStatus("正在保存配置……");
+  try {
+    const result = await fetchJson("/api/admin/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates: readAdminConfig() }),
+    });
+    const rejected = result.rejected?.length ? `，已忽略：${result.rejected.join(", ")}` : "";
+    setConfigStatus(`已保存 ${result.saved?.length || 0} 项${rejected}。点击“重启服务”后生效。`, "success");
+  } catch (error) {
+    setConfigStatus(error.message || "配置保存失败。", "error");
+  } finally {
+    saveConfigButton.disabled = false;
+  }
+}
+
+async function restartAdminService() {
+  restartServiceButton.disabled = true;
+  setConfigStatus("正在请求 Windows Python 服务重启……");
+  try {
+    const result = await fetchJson("/api/admin/restart", { method: "POST" });
+    setConfigStatus(result.message || "服务正在重启，请稍候刷新页面。", "success");
+  } catch (error) {
+    setConfigStatus(error.message || "服务重启失败。", "error");
+    restartServiceButton.disabled = false;
+  }
 }
 
 function renderMetricCards(target, cards) {
@@ -439,9 +533,11 @@ rangeButtons.forEach((button) => {
 
 adminLoginForm.addEventListener("submit", handleAdminLogin);
 adminLogoutButton.addEventListener("click", () => logoutAdmin());
+saveConfigButton.addEventListener("click", saveAdminConfig);
+restartServiceButton.addEventListener("click", restartAdminService);
 
 async function initializeAdmin() {
-  await loadDashboard();
+  await Promise.all([loadDashboard(), loadAdminConfig()]);
 }
 
 if (readAdminAuth()) {

@@ -19,7 +19,8 @@ class SalesGraphState(TypedDict, total=False):
     数据流向概览::
 
         message → init → supervisor_router
-            → intent → [sop, knowledge] → context_gate → conversation → safety
+            → intent → [sop, knowledge, sales_case_rag] → context_gate
+            → conversation → vector safety → SafetyAgent
             → final_reply → send → [finalize, memory_update] → END
                                       ↘
                     rewrite_reply → safety    handover → finalize → END

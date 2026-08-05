@@ -9,6 +9,7 @@ from app.core.auth import issue_auth_token, require_admin_auth, verify_admin_pas
 from app.core.config import get_settings
 from app.db import SessionLocal
 from app.services.admin_dashboard_service import AdminDashboardService
+from app.services.admin_config_service import AdminConfigService
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -17,6 +18,10 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 class AdminLoginRequest(BaseModel):
     username: str = Field(min_length=1)
     password: str = Field(min_length=1)
+
+
+class AdminConfigUpdateRequest(BaseModel):
+    updates: dict[str, object] = Field(default_factory=dict)
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -46,6 +51,34 @@ async def login_admin(request: AdminLoginRequest) -> dict[str, Any]:
         "role": "admin",
         **token,
     }
+
+
+@router.get("/config")
+async def get_admin_config(
+    _auth: dict[str, Any] = Depends(require_admin_auth),
+) -> dict[str, object]:
+    return AdminConfigService().list_items()
+
+
+@router.put("/config")
+async def update_admin_config(
+    request: AdminConfigUpdateRequest,
+    _auth: dict[str, Any] = Depends(require_admin_auth),
+) -> dict[str, object]:
+    try:
+        return AdminConfigService().update_items(request.updates)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/restart")
+async def restart_admin_service(
+    _auth: dict[str, Any] = Depends(require_admin_auth),
+) -> dict[str, object]:
+    return AdminConfigService().restart()
 
 
 @router.get("/dashboard/summary")
