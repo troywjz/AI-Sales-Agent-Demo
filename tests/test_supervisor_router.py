@@ -1,6 +1,10 @@
 from app.conversation import ConversationState
-from app.graph.nodes import route_after_knowledge
-from app.graph.routing_rules import has_strong_handover_keyword, load_routing_rules
+from app.graph.nodes import _intent_transfer_reason, route_after_knowledge
+from app.graph.routing_rules import (
+    has_strong_handover_keyword,
+    intent_handover_reasons,
+    load_routing_rules,
+)
 from app.graph.supervisor_router import decide_supervisor_route
 
 
@@ -79,3 +83,22 @@ def test_routing_rules_can_be_loaded_from_json(tmp_path) -> None:
     assert rules.strong_handover_keywords == ("找老板",)
     assert rules.small_talk_max_chars == 5
     assert has_strong_handover_keyword("我现在要找老板", rules) is True
+
+
+def test_intent_handover_reason_records_all_triggered_fields() -> None:
+    intent = {
+        "should_transfer": True,
+        "intent_category": "high_intent",
+        "purchase_intent": "high",
+        "emotion": "impatient",
+    }
+
+    assert intent_handover_reasons(intent) == [
+        "意图识别标记为应转人工",
+        "意图类别=high_intent",
+        "购买意向=high",
+        "情绪=impatient",
+    ]
+    assert _intent_transfer_reason(intent) == (
+        "意图识别触发转人工：意图识别标记为应转人工、意图类别=high_intent、购买意向=high、情绪=impatient"
+    )
