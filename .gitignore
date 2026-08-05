@@ -16,9 +16,9 @@ env/
 data/chat/
 data/business/identity.md
 data/business/routing_rules.json
-data/knowledge/faq.md
-data/knowledge/safety_rules.json
-data/knowledge/sales_sop.json
+data/knowledge/faq.csv
+data/knowledge/safety_rules.csv
+data/knowledge/sales_cases.csv
 data/knowledge/skus.csv
 data/knowledge/sop.csv
 data/knowledge/~$*
@@ -30,8 +30,17 @@ data/safety_rules/**/*.csv
 *baiduyun*
 logs/
 
+# 清洗后的私有评估数据和逐轮日志只保留在本机
+evaluation/*.csv
+evaluation/private_datasets/*
+!evaluation/private_datasets/.gitkeep
+evaluation/results/*
+!evaluation/results/.gitkeep
+
 # 开源演示目录不保留过程文档；Agent 提示词和 README 不受影响
 docs/
+!evaluation/docs/
+!evaluation/docs/README.md
 
 .idea/
 .vscode/

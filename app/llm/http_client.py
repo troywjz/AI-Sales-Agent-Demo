@@ -83,14 +83,34 @@ class HttpLLMClient:
 
         raw = await self._post_json(self._openai_chat_url(), payload, headers)
         try:
-            content = raw["choices"][0]["message"]["content"]
+            message = raw["choices"][0]["message"]
+            content = message["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMProviderError(
                 f"Unexpected response shape from provider '{self.config.provider}'."
             ) from exc
 
+        if not isinstance(content, str) or not content.strip():
+            # 推理模型可能在 token 上限内只返回 reasoning_content。该内容不是最终可见回复，
+            # 不能拿来充当 Agent JSON；抛出可回退的错误，让下一个供应商有机会完成请求。
+            finish_reason = str((raw.get("choices") or [{}])[0].get("finish_reason") or "")
+            has_reasoning = bool(
+                isinstance(message, dict)
+                and (
+                    message.get("reasoning_content")
+                    or message.get("reasoning")
+                )
+            )
+            detail = " reasoning-only response" if has_reasoning else " empty response"
+            if finish_reason:
+                detail += f" (finish_reason={finish_reason})"
+            raise LLMProviderError(
+                f"Provider '{self.config.provider}' returned{detail}; "
+                "no visible assistant content is available."
+            )
+
         return LLMResponse(
-            content=content or "",
+            content=content,
             provider=self.config.provider,
             model=self.config.model or "",
             raw_response=raw,

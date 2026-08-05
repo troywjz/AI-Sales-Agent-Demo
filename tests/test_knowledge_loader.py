@@ -46,3 +46,26 @@ def test_knowledge_loader_treats_legacy_price_cents_as_yuan(tmp_path) -> None:
     assert context["skus"][0]["sku_name"] == "初级会计体验课"
     assert context["skus"][0]["list_price_yuan"] == "598"
     assert "price_cents" not in context["skus"][0]
+
+
+def test_knowledge_loader_reads_faq_from_csv_when_database_is_unavailable(tmp_path) -> None:
+    (tmp_path / "faq.example.csv").write_text(
+        "faq_id,title,content,tags\n"
+        "faq-1,零基础可以学习吗？,可以从常见办公任务开始学习。,零基础;学习\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sop.example.csv").write_text(
+        "ID,SOP阶段,任务描述\n1,开场,确认需求\n",
+        encoding="utf-8",
+    )
+    loader = KnowledgeLoader(tmp_path)
+    loader._query_context_from_db = lambda **_: None  # type: ignore[method-assign]
+
+    context = loader.query_context(
+        message="零基础可以学习吗？",
+        intent={},
+        current_stage="开场",
+    )
+
+    assert "零基础可以学习吗？" in context["faq"]
+    assert "可以从常见办公任务开始学习" in context["faq"]

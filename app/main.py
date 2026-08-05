@@ -22,6 +22,7 @@ from app.db import init_db
 from app.demo_data import seed_demo_environment
 from app.knowledge.importer import import_knowledge_sources
 from app.realtime import realtime_manager
+from app.llm.providers import build_llm_fallback_configs
 from app.services.sop_followup_scheduler import (
     start_sop_followup_scheduler,
     stop_sop_followup_scheduler,
@@ -72,6 +73,18 @@ app = FastAPI(
     description="Sales Agent Windows showcase demo.",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def add_json_utf8_charset(request, call_next):
+    """显式声明 JSON 使用 UTF-8，避免 Windows PowerShell 按本地编码误解码中文。"""
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if content_type.startswith("application/json") and "charset=" not in content_type:
+        response.headers["content-type"] = "application/json; charset=utf-8"
+    return response
+
+
 app.include_router(admin_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
 app.include_router(websocket_router)
@@ -103,13 +116,14 @@ async def favicon() -> FileResponse:
 
 @app.get("/health")
 async def health_check() -> dict[str, str]:
+    real_model_available = bool(build_llm_fallback_configs(settings))
     return {
         "status": "ok",
         "app": settings.app_name,
         "env": settings.app_env,
         "runtime": "windows-python",
         "database": "postgresql",
-        "llm": "demo" if settings.demo_mode else settings.llm_provider,
+        "llm": settings.llm_provider if real_model_available and not settings.demo_mode else "demo-fallback",
     }
 
 
@@ -137,7 +151,7 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.app_host,
         port=settings.app_port,
-        reload=not settings.demo_mode,
+        reload=settings.app_reload,
         reload_dirs=(
             [str(path) for path in RELOAD_DIRS if path.exists()]
             if not settings.demo_mode

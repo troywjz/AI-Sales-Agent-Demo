@@ -1,6 +1,5 @@
 from functools import lru_cache
 from pathlib import Path
-
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,12 +10,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 class Settings(BaseSettings):
     app_name: str = Field(default="Sales Agent Demo", alias="APP_NAME")
     app_env: str = Field(default="demo", alias="APP_ENV")
-    demo_mode: bool = Field(default=True, alias="DEMO_MODE")
+    # Demo 仍然是 Windows 的运行形态，但模型调用默认优先尝试真实供应商。
+    # 只有没有任何可用真实模型配置，或显式开启 DEMO_MODE 时才使用 DemoLLMClient。
+    demo_mode: bool = Field(default=False, alias="DEMO_MODE")
     demo_agent_delay_ms: int = Field(default=60, alias="DEMO_AGENT_DELAY_MS")
     demo_seed_data: bool = Field(default=True, alias="DEMO_SEED_DATA")
     demo_allow_unsafe_seed: bool = Field(default=False, alias="DEMO_ALLOW_UNSAFE_SEED")
     app_host: str = Field(default="127.0.0.1", alias="APP_HOST")
     app_port: int = Field(default=8000, alias="APP_PORT")
+    app_reload: bool = Field(default=False, alias="APP_RELOAD")
     app_secret_key: str = Field(default="change-me", alias="APP_SECRET_KEY")
     auth_token_ttl_seconds: int = Field(default=43200, alias="AUTH_TOKEN_TTL_SECONDS")
     admin_username: str = Field(default="admin", alias="ADMIN_USERNAME")
@@ -28,15 +30,27 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://sales_agent:change-me@127.0.0.1:5432/sales_agent_demo",
         alias="DATABASE_URL",
     )
-    llm_provider: str = Field(default="demo", alias="LLM_PROVIDER")
+    # 数据库不可达时尽快失败并使用既有降级逻辑，避免同步连接无限阻塞请求线程。
+    database_connect_timeout_seconds: int = Field(
+        default=5,
+        ge=1,
+        alias="DATABASE_CONNECT_TIMEOUT_SECONDS",
+    )
+    llm_provider: str = Field(default="minimax", alias="LLM_PROVIDER")
     llm_provider_fallback: str = Field(
-        default="",
+        default="deepseek,aliyun,siliconflow",
         alias="LLM_PROVIDER_FALLBACK",
     )
     llm_timeout_seconds: float = Field(default=30.0, alias="LLM_TIMEOUT_SECONDS")
     llm_max_attempts_per_request: int = Field(
         default=0,
         alias="LLM_MAX_ATTEMPTS_PER_REQUEST",
+    )
+    # 仅控制评测批量回放同时启动多少个独立对话；单轮模型、超时和知识配置仍与正式服务相同。
+    evaluation_max_concurrency: int = Field(
+        default=3,
+        ge=1,
+        alias="EVALUATION_MAX_CONCURRENCY",
     )
     chat_request_timeout_seconds: float = Field(
         default=180.0,
@@ -81,7 +95,26 @@ class Settings(BaseSettings):
         ),
         alias="NEW_CUSTOMER_WELCOME_MESSAGES",
     )
-    sales_rag_enabled: bool = Field(default=True, alias="SALES_RAG_ENABLED")
+    embedding_provider: str = Field(default="siliconflow", alias="EMBEDDING_PROVIDER")
+    embedding_provider_fallback: str = Field(
+        default="aliyun",
+        alias="EMBEDDING_PROVIDER_FALLBACK",
+    )
+    embedding_timeout_seconds: float = Field(
+        default=30.0,
+        alias="EMBEDDING_TIMEOUT_SECONDS",
+    )
+    safety_vector_enabled: bool = Field(
+        default=False,
+        alias="SAFETY_VECTOR_ENABLED",
+    )
+    safety_vector_threshold: float = Field(
+        default=0.78,
+        alias="SAFETY_VECTOR_THRESHOLD",
+    )
+    safety_vector_top_k: int = Field(default=3, alias="SAFETY_VECTOR_TOP_K")
+    # Windows Demo 不预置向量案例；只有显式开启且数据库已有向量时才检索。
+    sales_rag_enabled: bool = Field(default=False, alias="SALES_RAG_ENABLED")
     sales_rag_top_k: int = Field(default=3, alias="SALES_RAG_TOP_K")
     sales_rag_min_quality_score: float = Field(
         default=0.45,
@@ -139,6 +172,18 @@ class Settings(BaseSettings):
     aliyun_api_key: str | None = Field(default=None, alias="ALIYUN_API_KEY")
     aliyun_model: str | None = Field(default=None, alias="ALIYUN_MODEL")
     aliyun_models: str | None = Field(default=None, alias="ALIYUN_MODELS")
+    aliyun_embedding_api_url: str | None = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        alias="ALIYUN_EMBEDDING_API_URL",
+    )
+    aliyun_embedding_api_key: str | None = Field(
+        default=None,
+        alias="ALIYUN_EMBEDDING_API_KEY",
+    )
+    aliyun_embedding_model: str | None = Field(
+        default="text-embedding-v4",
+        alias="ALIYUN_EMBEDDING_MODEL",
+    )
 
     siliconflow_api_url: str | None = Field(
         default="https://api.siliconflow.cn/v1",
@@ -147,6 +192,18 @@ class Settings(BaseSettings):
     siliconflow_api_key: str | None = Field(default=None, alias="SILICONFLOW_API_KEY")
     siliconflow_model: str | None = Field(default=None, alias="SILICONFLOW_MODEL")
     siliconflow_models: str | None = Field(default=None, alias="SILICONFLOW_MODELS")
+    siliconflow_embedding_api_url: str | None = Field(
+        default="https://api.siliconflow.cn/v1",
+        alias="SILICONFLOW_EMBEDDING_API_URL",
+    )
+    siliconflow_embedding_api_key: str | None = Field(
+        default=None,
+        alias="SILICONFLOW_EMBEDDING_API_KEY",
+    )
+    siliconflow_embedding_model: str | None = Field(
+        default="Qwen/Qwen3-Embedding-8B",
+        alias="SILICONFLOW_EMBEDDING_MODEL",
+    )
 
     glm_api_url: str | None = Field(
         default="https://open.bigmodel.cn/api/paas/v4/chat/completions",

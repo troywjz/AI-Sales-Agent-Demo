@@ -25,6 +25,7 @@ from app.graph.sales_graph import build_sales_graph
 from app.graph.state import SalesGraphState
 from app.knowledge import KnowledgeLoader
 from app.llm import LLMClient, LLMProviderError
+from app.core.config import Settings
 from app.repositories import ChatRepository
 
 
@@ -99,6 +100,7 @@ AGENT_NODE_BY_RUN = {
     "knowledge_agent": "knowledge",
     "conversation_agent": "conversation",
     "safety_agent": "safety",
+    "sales_case_rag": "sales_case_rag",
     "sales_graph": "sales_graph",
 }
 
@@ -208,6 +210,12 @@ class GraphSessionStore:
             self.repository.commit()
         return state
 
+    def save(self, state: ConversationState) -> ConversationState:
+        """保存进程内会话快照，供无数据库调用链继续下一轮。"""
+        saved = state.model_copy(deep=True)
+        self._states[saved.session_id] = saved
+        return saved.model_copy(deep=True)
+
 
 class SalesGraphService:
     def __init__(
@@ -217,6 +225,10 @@ class SalesGraphService:
         session_store: GraphSessionStore | None = None,
         knowledge_loader: KnowledgeLoader | None = None,
         repository: ChatRepository | None = None,
+        sales_case_rag_service: Any | None = None,
+        safety_vector_reviewer: Any | None = None,
+        settings: Settings | None = None,
+        enable_checkpoint: bool = True,
         request_timeout_seconds: float = 120.0,
         include_memory_update: bool = True,
     ) -> None:
@@ -226,6 +238,10 @@ class SalesGraphService:
         self.graph = build_sales_graph(
             llm_client,
             self.knowledge_loader,
+            sales_case_rag_service,
+            safety_vector_reviewer=safety_vector_reviewer,
+            settings=settings,
+            enable_checkpoint=enable_checkpoint,
             include_memory_update=include_memory_update,
         )
         self.memory_agent = MemoryAgent(llm_client)
@@ -310,6 +326,7 @@ class SalesGraphService:
         session_id: str | None = None,
         client_message_id: str | None = None,
         turn_id: str | None = None,
+        include_llm_call_details: bool = False,
     ) -> GraphChatTurnResult:
         state = self.session_store.get_or_create(session_id)
         self._align_initial_stage(state)
@@ -399,10 +416,17 @@ class SalesGraphService:
                     "handover",
                 )
                 self.repository.commit()
+                stored_state = self.session_store.save(stored_state)
                 return GraphChatTurnResult(
                     reply="",
                     state=stored_state,
-                    agent_runs=[serialize_run(run) for run in runs],
+                    agent_runs=[
+                        serialize_run(
+                            run,
+                            include_llm_call_details=include_llm_call_details,
+                        )
+                        for run in runs
+                    ],
                 )
             if reply and sent_reply:
                 saved_reply_message_id = self.repository.save_message(
@@ -435,10 +459,18 @@ class SalesGraphService:
             )
             self.repository.commit()
 
+        final_state = self.session_store.save(final_state)
+
         return GraphChatTurnResult(
             reply=reply,
             state=final_state,
-            agent_runs=[serialize_run(run) for run in runs],
+            agent_runs=[
+                serialize_run(
+                    run,
+                    include_llm_call_details=include_llm_call_details,
+                )
+                for run in runs
+            ],
         )
 
     async def stream_message(

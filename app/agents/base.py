@@ -51,9 +51,16 @@ class BaseLLMAgent:
     temperature: float = 0.2
     max_tokens: int | None = None
 
-    def __init__(self, llm_client: LLMClient, prompts_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        prompts_dir: Path | None = None,
+        *,
+        business_identity: str | None = None,
+    ) -> None:
         self.llm_client = llm_client
         self.prompts_dir = prompts_dir or PROJECT_ROOT / "prompts"
+        self.business_identity = business_identity
 
     async def run(self, context: dict[str, Any]) -> AgentRunResult:
         system_prompt = self._load_prompt()
@@ -128,6 +135,8 @@ class BaseLLMAgent:
         )
 
     def _load_business_identity(self) -> str:
+        if self.business_identity is not None:
+            return self.business_identity.strip()
         business_dir = PROJECT_ROOT / "data" / "business"
         for filename in ("identity.md", "identity.example.md"):
             path = business_dir / filename

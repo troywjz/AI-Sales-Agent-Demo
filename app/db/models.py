@@ -381,6 +381,16 @@ class KnowledgeSafetyRule(Base):
     standard: Mapped[str] = mapped_column(Text, default="")
     violation: Mapped[str] = mapped_column(Text, default="")
     handling_result: Mapped[str] = mapped_column(Text, default="")
+    # Windows Demo 使用文本形式保存向量，兼容未安装 pgvector 扩展的本地环境；
+    # 向量审核只在这些列存在实际数据时启用。
+    violation_embedding_gjld_q3e8b: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    violation_embedding_albl_tev4: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
 
 
 class SalesRAGConversation(Base):
@@ -420,6 +430,14 @@ class SalesRAGChunk(Base):
     quality_score: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     tags_json: Mapped[str] = mapped_column(Text, default="[]")
     raw_json: Mapped[str] = mapped_column(Text, default="{}")
+    sales_embedding_gjld_q3e8b: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    sales_embedding_albl_tev4: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -447,6 +465,66 @@ class SalesCaseRAGEvent(Base):
     used_strategy: Mapped[str] = mapped_column(Text, default="")
     elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class LLMCallEmbed(Base):
+    """Embedding 模型调用记录：用于追踪向量审核和向量检索的调用。"""
+
+    __tablename__ = "llm_calls_embed"
+
+    call_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    node_invocation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    node_name: Mapped[str] = mapped_column(String(64), default="", index=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    model_name: Mapped[str] = mapped_column(String(128), index=True)
+    api_url: Mapped[str] = mapped_column(Text, default="")
+    target_table: Mapped[str] = mapped_column(String(128), default="", index=True)
+    target_column: Mapped[str] = mapped_column(String(128), default="", index=True)
+    target_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    attempt_index: Mapped[int] = mapped_column(Integer, default=1)
+    elapsed_ms: Mapped[int] = mapped_column(Integer, default=0)
+    success: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    embedding_dimension: Mapped[int] = mapped_column(Integer, default=0)
+    input_text: Mapped[str] = mapped_column(Text, default="")
+    error_type: Mapped[str] = mapped_column(String(128), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    request_json: Mapped[str] = mapped_column(Text, default="{}")
+    response_json: Mapped[str] = mapped_column(Text, default="{}")
+    usage_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class LLMSafetyVectorMatch(Base):
+    """风控向量匹配记录：保存回复与风控规则的相似度明细。"""
+
+    __tablename__ = "llm_safety_vector_matches"
+
+    match_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    turn_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    node_invocation_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    node_name: Mapped[str] = mapped_column(String(64), default="", index=True)
+    provider: Mapped[str] = mapped_column(String(64), index=True)
+    model_name: Mapped[str] = mapped_column(String(128), index=True)
+    target_table: Mapped[str] = mapped_column(String(128), default="knowledge_safety_rules", index=True)
+    target_column: Mapped[str] = mapped_column(String(128), default="", index=True)
+    target_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    rule_id: Mapped[str] = mapped_column(String(128), default="", index=True)
+    level: Mapped[str] = mapped_column(Text, default="")
+    primary_category: Mapped[str] = mapped_column(Text, default="")
+    secondary_category: Mapped[str] = mapped_column(Text, default="")
+    standard: Mapped[str] = mapped_column(Text, default="")
+    violation: Mapped[str] = mapped_column(Text, default="")
+    handling_result: Mapped[str] = mapped_column(Text, default="")
+    draft_reply: Mapped[str] = mapped_column(Text, default="")
+    similarity: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    threshold: Mapped[float] = mapped_column(Float, default=0.0)
+    match_rank: Mapped[int] = mapped_column(Integer, default=0)
+    is_hit: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    action: Mapped[str] = mapped_column(String(32), default="pass", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class KnowledgeImportRun(Base):

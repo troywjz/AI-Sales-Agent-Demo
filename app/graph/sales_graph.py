@@ -11,7 +11,9 @@ from app.graph.nodes import (
     route_after_supervisor,
 )
 from app.graph.state import SalesGraphState
+from app.core.config import Settings
 from app.knowledge import KnowledgeLoader
+from app.knowledge.safety_vector import SafetyVectorReviewer
 from app.llm import LLMClient
 from app.sales_rag import SalesCaseRAGService
 
@@ -27,6 +29,8 @@ def build_sales_graph(
     knowledge_loader: KnowledgeLoader | None = None,
     sales_case_rag_service: SalesCaseRAGService | None = None,
     *,
+    safety_vector_reviewer: SafetyVectorReviewer | None = None,
+    settings: Settings | None = None,
     enable_checkpoint: bool = True,
     include_memory_update: bool = True,
 ):
@@ -48,7 +52,7 @@ def build_sales_graph(
           ↓
     conversation / handover
         ↓
-      safety          ── 风控审核
+      safety          ── 向量风控（有向量数据时）+ SafetyAgent
         ↓ (条件路由)
     ┌───────┼───────┐
     ↓       ↓       ↓
@@ -77,7 +81,9 @@ def build_sales_graph(
     nodes = SalesGraphNodes(
         llm_client,
         knowledge_loader,
+        safety_vector_reviewer=safety_vector_reviewer,
         sales_case_rag_service=sales_case_rag_service,
+        settings=settings,
     )
     graph = StateGraph(SalesGraphState)
 

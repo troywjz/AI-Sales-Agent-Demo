@@ -7,9 +7,14 @@ from app.llm.providers import build_llm_fallback_configs
 
 def create_llm_client(settings: Settings | None = None) -> LLMClient:
     settings = settings or get_settings()
-    if settings.demo_mode or settings.llm_provider.strip().lower() == "demo":
+    configs = build_llm_fallback_configs(settings)
+    if (
+        settings.demo_mode
+        or settings.llm_provider.strip().lower() == "demo"
+        or not configs
+    ):
         return DemoLLMClient(delay_ms=settings.demo_agent_delay_ms)
     return FallbackLLMClient(
-        build_llm_fallback_configs(settings),
+        configs,
         max_attempts=settings.llm_max_attempts_per_request,
     )

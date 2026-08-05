@@ -11,7 +11,8 @@ from app.core.config import get_settings
 
 def ensure_postgres_database() -> None:
     """确保演示数据库存在，但绝不自动创建非 Demo 名称的数据库。"""
-    database_url = make_url(get_settings().database_url)
+    settings = get_settings()
+    database_url = make_url(settings.database_url)
     if database_url.get_backend_name() != "postgresql":
         raise RuntimeError("Windows Demo 仅支持 PostgreSQL。")
 
@@ -19,7 +20,12 @@ def ensure_postgres_database() -> None:
     if not database_name:
         raise RuntimeError("DATABASE_URL 缺少 PostgreSQL 数据库名。")
 
-    target_engine = create_engine(database_url, pool_pre_ping=True)
+    connect_args = {"connect_timeout": settings.database_connect_timeout_seconds}
+    target_engine = create_engine(
+        database_url,
+        pool_pre_ping=True,
+        connect_args=connect_args,
+    )
     try:
         with target_engine.connect() as connection:
             connection.execute(text("SELECT 1"))
@@ -30,9 +36,9 @@ def ensure_postgres_database() -> None:
     finally:
         target_engine.dispose()
 
-    if "demo" not in database_name.lower():
+    if database_name.lower() != "sales_agent_demo":
         raise RuntimeError(
-            "目标 PostgreSQL 数据库不存在；仅允许自动创建名称包含 demo 的演示库。"
+            "目标 PostgreSQL 数据库不存在；Windows Demo 只允许自动创建 sales_agent_demo。"
         )
     if not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
         raise RuntimeError("演示数据库名只能包含字母、数字和下划线。")
@@ -42,6 +48,7 @@ def ensure_postgres_database() -> None:
         admin_url,
         isolation_level="AUTOCOMMIT",
         pool_pre_ping=True,
+        connect_args=connect_args,
     )
     try:
         with admin_engine.connect() as connection:
