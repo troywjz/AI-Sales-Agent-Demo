@@ -23,6 +23,7 @@ from app.sales_rag import SalesCaseRAGService
 from app.graph.supervisor_router import decide_supervisor_route
 from app.graph.routing_rules import (
     explicit_knowledge_sufficiency,
+    intent_handover_reasons,
     intent_needs_context,
     intent_should_direct_reply,
     intent_should_handover,
@@ -460,10 +461,12 @@ class SalesGraphNodes:
         sop = graph_state.get("sop") or {}
         knowledge = graph_state.get("knowledge_output") or {}
         supervisor = graph_state.get("supervisor") or {}
+        intent = graph_state.get("intent") or {}
         transfer_reason = str(
             safety.get("transfer_reason")
             or (sop.get("reason") if bool(sop.get("should_transfer")) else "")
             or _knowledge_transfer_reason(knowledge)
+            or _intent_transfer_reason(intent)
             or graph_state.get("transfer_reason")
             or "; ".join(supervisor.get("reasons") or [])
             or "需要人工跟进"
@@ -794,6 +797,14 @@ def _knowledge_transfer_reason(knowledge: dict[str, Any]) -> str:
     if missing_items:
         return "知识库信息不足：" + "、".join(str(item) for item in missing_items[:3])
     return "知识库信息不足，需要人工确认后回复"
+
+
+def _intent_transfer_reason(intent: dict[str, Any]) -> str:
+    """生成意图识别触发转人工的可读原因。"""
+    reasons = intent_handover_reasons(intent)
+    if not reasons:
+        return ""
+    return "意图识别触发转人工：" + "、".join(reasons)
 
 
 def _require_message(graph_state: SalesGraphState) -> str:

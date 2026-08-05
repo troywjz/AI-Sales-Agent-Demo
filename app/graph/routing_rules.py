@@ -306,15 +306,31 @@ def intent_should_handover(
     intent: dict[str, Any],
     rules: RoutingRules = DEFAULT_ROUTING_RULES,
 ) -> bool:
+    return bool(intent_handover_reasons(intent, rules))
+
+
+def intent_handover_reasons(
+    intent: dict[str, Any],
+    rules: RoutingRules = DEFAULT_ROUTING_RULES,
+) -> list[str]:
+    """返回意图识别触发转人工的确定性依据。
+
+    该函数与 ``intent_should_handover`` 共用同一套规则，供正式链路在
+    转人工时记录可追溯原因，避免只留下泛化的调度兜底文案。
+    """
     category = str(intent.get("intent_category") or "").lower()
     purchase_intent = str(intent.get("purchase_intent") or "").lower()
     emotion = str(intent.get("emotion") or "").lower()
-    return (
-        bool(intent.get("should_transfer"))
-        or category in rules.intent_handover_categories
-        or purchase_intent in rules.intent_handover_purchase_intents
-        or emotion in rules.intent_handover_emotions
-    )
+    reasons: list[str] = []
+    if bool(intent.get("should_transfer")):
+        reasons.append("意图识别标记为应转人工")
+    if category in rules.intent_handover_categories:
+        reasons.append(f"意图类别={category}")
+    if purchase_intent in rules.intent_handover_purchase_intents:
+        reasons.append(f"购买意向={purchase_intent}")
+    if emotion in rules.intent_handover_emotions:
+        reasons.append(f"情绪={emotion}")
+    return reasons
 
 
 def intent_should_direct_reply(
