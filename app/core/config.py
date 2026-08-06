@@ -41,10 +41,19 @@ class Settings(BaseSettings):
         default="deepseek,aliyun,siliconflow",
         alias="LLM_PROVIDER_FALLBACK",
     )
-    llm_timeout_seconds: float = Field(default=30.0, alias="LLM_TIMEOUT_SECONDS")
+    llm_timeout_seconds: float = Field(default=90.0, alias="LLM_TIMEOUT_SECONDS")
     llm_max_attempts_per_request: int = Field(
         default=0,
         alias="LLM_MAX_ATTEMPTS_PER_REQUEST",
+    )
+    # 推理模型（如 deepseek 推理版）的 reasoning token 预留预算：叠加到每次请求
+    # 的 max_tokens 上，避免推理过程耗尽全部预算导致无可见输出（reasoning-only）；
+    # 预算 >0 时，reasoning-only 响应还会触发同供应商放宽 max_tokens 重试一次。
+    # 非推理模型传 0 表示不预留、不触发放宽重试。
+    llm_reasoning_budget_tokens: int = Field(
+        default=4096,
+        ge=0,
+        alias="LLM_REASONING_BUDGET_TOKENS",
     )
     # 仅控制评测批量回放同时启动多少个独立对话；单轮模型、超时和知识配置仍与正式服务相同。
     evaluation_max_concurrency: int = Field(
@@ -53,7 +62,7 @@ class Settings(BaseSettings):
         alias="EVALUATION_MAX_CONCURRENCY",
     )
     chat_request_timeout_seconds: float = Field(
-        default=180.0,
+        default=300.0,
         alias="CHAT_REQUEST_TIMEOUT_SECONDS",
     )
     chat_merge_max_messages: int = Field(

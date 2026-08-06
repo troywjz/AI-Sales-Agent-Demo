@@ -7,6 +7,7 @@ from app.llm.base import (
     LLMConfigurationError,
     LLMProviderError,
     LLMResponse,
+    ReasoningTokenLimitExceeded,
 )
 from app.llm.providers import LLMProtocol, LLMProviderConfig
 
@@ -71,8 +72,12 @@ class HttpLLMClient:
             "temperature": temperature,
             "stream": False,
         }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+        # 推理模型（如 deepseek 推理版）的 reasoning 过程也计入 max_tokens，预算
+        # 不足时会出现只有 reasoning_content、没有可见输出的响应。这里把预留预算
+        # 叠加到 max_tokens 上；非推理模型传 0 时行为与原来完全一致。
+        budget = self.config.reasoning_budget_tokens or 0
+        if max_tokens is not None or budget > 0:
+            payload["max_tokens"] = (max_tokens or 1024) + budget
         # Many OpenAI-compatible gateways do not fully support response_format.
         # JSON-only behavior is enforced by prompts and validated after response.
 
@@ -104,9 +109,11 @@ class HttpLLMClient:
             detail = " reasoning-only response" if has_reasoning else " empty response"
             if finish_reason:
                 detail += f" (finish_reason={finish_reason})"
-            raise LLMProviderError(
+            raise ReasoningTokenLimitExceeded(
                 f"Provider '{self.config.provider}' returned{detail}; "
-                "no visible assistant content is available."
+                "no visible assistant content is available.",
+                finish_reason=finish_reason,
+                has_reasoning=has_reasoning,
             )
 
         return LLMResponse(
@@ -176,7 +183,11 @@ class HttpLLMClient:
         headers: dict[str, str],
     ) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+            # trust_env=False：本项目 LLM 供应商均为国内 API，必须直连，不读环境变量
+            # 代理。否则代理软件一关，请求会被强制发往本地代理端口导致 ConnectionRefused。
+            async with httpx.AsyncClient(
+                timeout=self.config.timeout_seconds, trust_env=False
+            ) as client:
                 response = await client.post(
                     api_url,
                     headers=headers,
