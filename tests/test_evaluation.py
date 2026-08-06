@@ -39,16 +39,16 @@ def _write_input_csv(root: Path, *, rows: list[dict[str, str]] | None = None) ->
     path = root / "test-only-evaluation.csv"
     values = rows or [
         {
-            "对话回合标识符": "TEST_TURN_001",
+            "来源": "TEST_TURN_001",
             "用户消息": "这个课程适合零基础吗？",
-            "真人销售回复": "TEST_ONLY 真人回复第一条\nTEST_ONLY 真人回复第二条",
-            "上文总结的用户记忆": "TEST_ONLY 客户想提升办公效率。",
+            "销售回复": "TEST_ONLY 真人回复第一条\nTEST_ONLY 真人回复第二条",
+            "上文记忆": "TEST_ONLY 客户想提升办公效率。",
         },
         {
-            "对话回合标识符": "TEST_TURN_002",
+            "来源": "TEST_TURN_002",
             "用户消息": "我想了解价格和学习安排。",
-            "真人销售回复": "TEST_ONLY 真人回复。",
-            "上文总结的用户记忆": "TEST_ONLY 客户在比较课程方案。",
+            "销售回复": "TEST_ONLY 真人回复。",
+            "上文记忆": "TEST_ONLY 客户在比较课程方案。",
         },
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as file:
@@ -147,12 +147,12 @@ def test_csv_dataset_requires_the_declared_first_four_columns(tmp_path: Path) ->
     assert dataset.result_fieldnames == (*INPUT_COLUMNS, SYSTEM_REPLY_COLUMN)
 
     invalid = tmp_path / "invalid.csv"
-    invalid.write_text("用户消息,对话回合标识符\n测试,TURN\n", encoding="utf-8")
+    invalid.write_text("用户消息,来源\n测试,TURN\n", encoding="utf-8")
     with pytest.raises(EvaluationDatasetError, match="前四列必须"):
         EvaluationCsvDataset.load(invalid)
 
     non_utf8 = tmp_path / "non-utf8.csv"
-    non_utf8.write_bytes("对话回合标识符".encode("gbk"))
+    non_utf8.write_bytes("来源".encode("gbk"))
     with pytest.raises(EvaluationDatasetError, match="UTF-8"):
         EvaluationCsvDataset.load(non_utf8)
 
@@ -192,14 +192,16 @@ def test_runner_outputs_five_column_result_and_blind_review_files(
     assert summary.results_path.name == SYSTEM_RESULTS_FILENAME
     result_columns, result_rows = read_csv(summary.results_path)
     assert result_columns == (*INPUT_COLUMNS, SYSTEM_REPLY_COLUMN)
-    assert result_rows[0]["真人销售回复"] == "TEST_ONLY 真人回复第一条\nTEST_ONLY 真人回复第二条"
+    assert result_rows[0]["销售回复"] == "TEST_ONLY 真人回复第一条\nTEST_ONLY 真人回复第二条"
     assert result_rows[0][SYSTEM_REPLY_COLUMN]
     assert summary.blind_review_path.name == BLIND_REVIEW_FILENAME
     assert summary.blind_mapping_path.name == BLIND_MAPPING_FILENAME
 
     blind_columns, blind_rows = read_csv(summary.blind_review_path)
     mapping_columns, mapping_rows = read_csv(summary.blind_mapping_path)
-    assert "来源" not in "、".join(blind_columns)
+    # 盲评表第一列沿用输入“来源”回合标识，但不能泄露真人/系统的候选来源映射。
+    assert "候选甲来源" not in blind_columns
+    assert "候选乙来源" not in blind_columns
     assert len(blind_rows) == len(result_rows)
     assert len(mapping_rows) == len(result_rows)
     assert any(HUMAN_SOURCE in value for row in mapping_rows for value in row.values())
@@ -214,10 +216,10 @@ def test_runner_respects_env_configured_parallelism(
         tmp_path,
         rows=[
             {
-                "对话回合标识符": f"TEST_TURN_{index}",
+                "来源": f"TEST_TURN_{index}",
                 "用户消息": "TEST_ONLY",
-                "真人销售回复": "TEST_ONLY",
-                "上文总结的用户记忆": "TEST_ONLY",
+                "销售回复": "TEST_ONLY",
+                "上文记忆": "TEST_ONLY",
             }
             for index in range(3)
         ],
@@ -275,13 +277,13 @@ def test_blind_scoring_maps_candidates_back_to_human_and_system(
     )
     columns, reviews = read_csv(summary.blind_review_path)
     _, mappings = read_csv(summary.blind_mapping_path)
-    mapping_by_id = {row["对话回合标识符"]: row for row in mappings}
+    mapping_by_id = {row["来源"]: row for row in mappings}
     for review in reviews:
         review["评审人"] = "TEST_REVIEWER"
         for candidate in (CANDIDATE_A, CANDIDATE_B):
             for label in LABELS:
                 review[f"{candidate} {label}"] = "1"
-            if mapping_by_id[review["对话回合标识符"]][f"{candidate}来源"] == SYSTEM_SOURCE:
+            if mapping_by_id[review["来源"]][f"{candidate}来源"] == SYSTEM_SOURCE:
                 review[f"{candidate} 意向推进 P"] = "0"
     write_csv(summary.blind_review_path, columns, reviews)
 

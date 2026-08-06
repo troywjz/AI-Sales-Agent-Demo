@@ -28,10 +28,12 @@ LABELS = (
     "意向推进 P",
     "用户反馈 F",
 )
+# 回合标识列统一沿用输入数据集的“来源”列名，输入输出表格保持同名字段。
+TURN_ID_COLUMN = "来源"
 BLIND_REVIEW_COLUMNS = (
-    "对话回合标识符",
+    TURN_ID_COLUMN,
     "用户消息",
-    "上文总结的用户记忆",
+    "上文记忆",
     f"{CANDIDATE_A}回复",
     f"{CANDIDATE_B}回复",
     *[f"{CANDIDATE_A} {label}" for label in LABELS],
@@ -40,12 +42,12 @@ BLIND_REVIEW_COLUMNS = (
     "评审备注",
 )
 BLIND_MAPPING_COLUMNS = (
-    "对话回合标识符",
+    TURN_ID_COLUMN,
     f"{CANDIDATE_A}来源",
     f"{CANDIDATE_B}来源",
 )
 SCORE_DETAIL_COLUMNS = (
-    "对话回合标识符",
+    TURN_ID_COLUMN,
     "回复来源",
     *LABELS,
     "基础分",
@@ -92,11 +94,11 @@ def create_blind_review_package(
     mapping_rows: list[dict[str, str]] = []
     seen_turn_ids: set[str] = set()
     for result in result_rows:
-        turn_id = _required(result, "对话回合标识符")
+        turn_id = _required(result, "来源")
         if turn_id in seen_turn_ids:
-            raise EvaluationScoringError(f"系统回复结果存在重复对话回合标识符：{turn_id}")
+            raise EvaluationScoringError(f"系统回复结果存在重复来源：{turn_id}")
         seen_turn_ids.add(turn_id)
-        human_reply = result.get("真人销售回复", "")
+        human_reply = result.get("销售回复", "")
         system_reply = result.get(SYSTEM_REPLY_COLUMN, "")
         first_source, second_source = _candidate_sources(turn_id)
         replies = {
@@ -105,9 +107,9 @@ def create_blind_review_package(
         }
         review_rows.append(
             {
-                "对话回合标识符": turn_id,
+                TURN_ID_COLUMN: turn_id,
                 "用户消息": result.get("用户消息", ""),
-                "上文总结的用户记忆": result.get("上文总结的用户记忆", ""),
+                "上文记忆": result.get("上文记忆", ""),
                 f"{CANDIDATE_A}回复": replies[first_source],
                 f"{CANDIDATE_B}回复": replies[second_source],
                 **{f"{candidate} {label}": "" for candidate in (CANDIDATE_A, CANDIDATE_B) for label in LABELS},
@@ -117,7 +119,7 @@ def create_blind_review_package(
         )
         mapping_rows.append(
             {
-                "对话回合标识符": turn_id,
+                TURN_ID_COLUMN: turn_id,
                 f"{CANDIDATE_A}来源": first_source,
                 f"{CANDIDATE_B}来源": second_source,
             }
@@ -150,9 +152,9 @@ def score_blind_review(
     mapping_columns, mapping_rows = read_csv(map_path)
     _require_columns(mapping_columns, BLIND_MAPPING_COLUMNS, "盲评映射")
 
-    results_by_id = _rows_by_turn_id(result_rows, "系统回复结果")
-    reviews_by_id = _rows_by_turn_id(review_rows, "盲评表")
-    mappings_by_id = _rows_by_turn_id(mapping_rows, "盲评映射")
+    results_by_id = _rows_by_turn_id(result_rows, "系统回复结果", key_column="来源")
+    reviews_by_id = _rows_by_turn_id(review_rows, "盲评表", key_column=TURN_ID_COLUMN)
+    mappings_by_id = _rows_by_turn_id(mapping_rows, "盲评映射", key_column=TURN_ID_COLUMN)
     _ensure_same_turn_ids(results_by_id, set(reviews_by_id), "盲评表")
     _ensure_same_turn_ids(results_by_id, set(mappings_by_id), "盲评映射")
     technical_status = _technical_status_by_turn(root)
@@ -166,7 +168,7 @@ def score_blind_review(
     }
     technical_failed = 0
     for result in result_rows:
-        turn_id = _required(result, "对话回合标识符")
+        turn_id = _required(result, "来源")
         review = reviews_by_id[turn_id]
         mapping = mappings_by_id[turn_id]
         status = technical_status[turn_id]
@@ -191,7 +193,7 @@ def score_blind_review(
                 label_values[source][label].append(value)
             details.append(
                 {
-                    "对话回合标识符": turn_id,
+                    TURN_ID_COLUMN: turn_id,
                     "回复来源": source,
                     **labels,
                     "基础分": base_score,
@@ -253,10 +255,10 @@ def _candidate_sources(turn_id: str) -> tuple[str, str]:
 
 def _technical_status_by_turn(root: Path) -> dict[str, str]:
     columns, rows = read_csv(root / TECHNICAL_DETAILS_FILENAME)
-    _require_columns(columns, ("对话回合标识符", "运行状态"), "技术运行明细")
+    _require_columns(columns, (TURN_ID_COLUMN, "运行状态"), "技术运行明细")
     return {
         turn_id: row.get("运行状态", "failed") or "failed"
-        for turn_id, row in _rows_by_turn_id(rows, "技术运行明细").items()
+        for turn_id, row in _rows_by_turn_id(rows, "技术运行明细", key_column=TURN_ID_COLUMN).items()
     }
 
 
@@ -351,12 +353,17 @@ def _require_columns(
         )
 
 
-def _rows_by_turn_id(rows: list[dict[str, str]], source_name: str) -> dict[str, dict[str, str]]:
+def _rows_by_turn_id(
+    rows: list[dict[str, str]],
+    source_name: str,
+    *,
+    key_column: str,
+) -> dict[str, dict[str, str]]:
     values: dict[str, dict[str, str]] = {}
     for row in rows:
-        turn_id = _required(row, "对话回合标识符")
+        turn_id = _required(row, key_column)
         if turn_id in values:
-            raise EvaluationScoringError(f"{source_name} 存在重复对话回合标识符：{turn_id}")
+            raise EvaluationScoringError(f"{source_name} 存在重复回合标识：{turn_id}")
         values[turn_id] = row
     return values
 

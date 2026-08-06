@@ -169,7 +169,7 @@ async def run_evaluation(
     write_csv(
         run_dir / TECHNICAL_DETAILS_FILENAME,
         (
-            "对话回合标识符",
+            "来源",
             "运行状态",
             "耗时毫秒",
             "是否转人工",
@@ -223,7 +223,7 @@ async def run_evaluation(
 
 
 def _parse_memory_summary(memory_summary: str) -> tuple[str, CustomerProfile]:
-    """解析评测 CSV『上文总结的用户记忆』JSON，还原上文摘要与客户画像。
+    """解析评测 CSV『上文记忆』JSON，还原上文摘要与客户画像。
 
     评测数据中该列是 {"history_summary": "...", "customer_profile": {...}} 结构的
     JSON。正式环境从数据库恢复画像，评测环境应尽量还原同一状态，否则意图识别等
@@ -324,7 +324,7 @@ def _result_csv_row(
 
 def _technical_detail_row(result: TurnRunResult) -> dict[str, Any]:
     return {
-        "对话回合标识符": result.row.turn_id,
+        "来源": result.row.turn_id,
         "运行状态": result.execution_status,
         "耗时毫秒": result.elapsed_ms,
         "是否转人工": "是" if result.transfer_flag else "否",

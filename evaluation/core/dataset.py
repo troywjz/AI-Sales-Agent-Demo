@@ -9,10 +9,10 @@ from pathlib import Path
 
 # 正式评测输入的前四列固定；后续附加列允许保留，但不会进入模型上下文。
 INPUT_COLUMNS = (
-    "对话回合标识符",
+    "来源",
     "用户消息",
-    "真人销售回复",
-    "上文总结的用户记忆",
+    "销售回复",
+    "上文记忆",
 )
 SYSTEM_REPLY_COLUMN = "系统销售回复"
 SYSTEM_RESULTS_FILENAME = "系统回复结果.csv"
@@ -87,10 +87,10 @@ class EvaluationCsvDataset:
                 memory_summary = values[INPUT_COLUMNS[3]].strip()
                 if not turn_id or not user_message:
                     raise EvaluationDatasetError(
-                        f"评测 CSV 第 {row_number} 行必须填写对话回合标识符和用户消息。"
+                        f"评测 CSV 第 {row_number} 行必须填写来源和用户消息。"
                     )
                 if turn_id in seen_turn_ids:
-                    raise EvaluationDatasetError(f"评测 CSV 存在重复对话回合标识符：{turn_id}")
+                    raise EvaluationDatasetError(f"评测 CSV 存在重复来源：{turn_id}")
                 seen_turn_ids.add(turn_id)
                 rows.append(
                     EvaluationInputRow(
