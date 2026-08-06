@@ -1,5 +1,10 @@
 from app.core.config import Settings
-from app.llm.base import ChatMessage, LLMProviderError, LLMResponse
+from app.llm.base import (
+    ChatMessage,
+    LLMProviderError,
+    LLMResponse,
+    ReasoningTokenLimitExceeded,
+)
 from app.llm.fallback_client import FallbackLLMClient
 from app.llm.http_client import HttpLLMClient
 from app.llm.providers import LLMProtocol, LLMProviderConfig, build_llm_fallback_configs
@@ -244,5 +249,203 @@ def test_http_client_rejects_reasoning_only_response_for_fallback(
 
     import asyncio
 
-    with pytest.raises(LLMProviderError, match="reasoning-only response"):
+    with pytest.raises(ReasoningTokenLimitExceeded, match="reasoning-only response"):
         asyncio.run(client.chat([ChatMessage(role="user", content="test")]))
+
+
+class ReasoningThenSuccessClient:
+    """第一次抛推理预算耗尽，第二次返回正常回复；记录每次收到的 max_tokens。"""
+
+    def __init__(self, content: str = "ok") -> None:
+        self.calls: list[int | None] = []
+        self.content = content
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+        response_format: str | None = None,
+    ) -> LLMResponse:
+        self.calls.append(max_tokens)
+        if len(self.calls) == 1:
+            raise ReasoningTokenLimitExceeded(
+                "Provider 'x' returned reasoning-only response (finish_reason=length)",
+                finish_reason="length",
+                has_reasoning=True,
+            )
+        return LLMResponse(
+            content=self.content,
+            provider="retry-provider",
+            model="retry-model",
+            raw_response={"choices": [{"message": {"content": self.content}}]},
+            usage={"total_tokens": 1},
+        )
+
+
+class AlwaysReasoningClient:
+    def __init__(self) -> None:
+        self.calls: list[int | None] = []
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float = 0.3,
+        max_tokens: int | None = None,
+        response_format: str | None = None,
+    ) -> LLMResponse:
+        self.calls.append(max_tokens)
+        raise ReasoningTokenLimitExceeded(
+            "Provider 'x' returned reasoning-only response (finish_reason=length)",
+            finish_reason="length",
+            has_reasoning=True,
+        )
+
+
+def _budget_config(provider: str = "deepseek") -> LLMProviderConfig:
+    return LLMProviderConfig(
+        provider=provider,
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        protocol=LLMProtocol.openai_chat,
+        timeout_seconds=1,
+        reasoning_budget_tokens=4096,
+    )
+
+
+def test_fallback_retries_same_provider_after_reasoning_only() -> None:
+    client = FallbackLLMClient([_budget_config()])
+    fake = ReasoningThenSuccessClient()
+    client.clients = [fake]
+
+    import asyncio
+
+    response = asyncio.run(client.chat([ChatMessage(role="user", content="test")]))
+
+    assert response.content == "ok"
+    assert fake.calls == [None, 6144]  # 首次原值；重试 = 2*1024 + 4096
+    assert [attempt.provider for attempt in response.call_attempts] == ["deepseek", "deepseek"]
+    assert [attempt.success for attempt in response.call_attempts] == [False, True]
+    assert response.call_attempts[0].error_type == "ReasoningTokenLimitExceeded"
+
+
+def test_fallback_moves_to_next_provider_when_retry_also_fails() -> None:
+    client = FallbackLLMClient([_budget_config("deepseek"), _budget_config("siliconflow")])
+    always = AlwaysReasoningClient()
+    success = SuccessClient()
+    client.clients = [always, success]
+
+    import asyncio
+
+    response = asyncio.run(client.chat([ChatMessage(role="user", content="test")]))
+
+    assert response.content == "ok"
+    assert response.provider == "success"
+    assert always.calls == [None, 6144]  # 同供应商重试一次后放弃
+    assert len(response.call_attempts) == 3
+    # attempt.provider 记录的是供应商配置名，不是 mock client 返回的 provider。
+    assert [attempt.provider for attempt in response.call_attempts] == [
+        "deepseek",
+        "deepseek",
+        "siliconflow",
+    ]
+    assert [attempt.success for attempt in response.call_attempts] == [False, False, True]
+
+
+def test_fallback_does_not_retry_without_budget() -> None:
+    config = LLMProviderConfig(
+        provider="deepseek",
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        protocol=LLMProtocol.openai_chat,
+        timeout_seconds=1,
+    )
+    client = FallbackLLMClient([config, _budget_config("siliconflow")])
+    always = AlwaysReasoningClient()
+    success = SuccessClient()
+    client.clients = [always, success]
+
+    import asyncio
+
+    response = asyncio.run(client.chat([ChatMessage(role="user", content="test")]))
+
+    assert always.calls == [None]  # budget=0 不做同供应商重试
+    assert len(response.call_attempts) == 2
+
+
+def test_http_client_adds_reasoning_budget_to_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _budget_config()
+    client = HttpLLMClient(config)
+    captured: dict = {}
+
+    async def capture_post_json(_url, payload, _headers):
+        captured["payload"] = payload
+        return {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "hello"},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_post_json", capture_post_json)
+
+    import asyncio
+
+    asyncio.run(
+        client.chat(
+            [ChatMessage(role="user", content="test")],
+            max_tokens=800,
+        )
+    )
+
+    assert captured["payload"]["max_tokens"] == 800 + 4096
+
+
+def test_http_client_without_budget_keeps_original_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = LLMProviderConfig(
+        provider="deepseek",
+        api_url="https://example.invalid/v1",
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        protocol=LLMProtocol.openai_chat,
+        timeout_seconds=1,
+    )
+    client = HttpLLMClient(config)
+    captured: dict = {}
+
+    async def capture_post_json(_url, payload, _headers):
+        captured["payload"] = payload
+        return {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "hello"},
+                }
+            ]
+        }
+
+    monkeypatch.setattr(client, "_post_json", capture_post_json)
+
+    import asyncio
+
+    asyncio.run(
+        client.chat(
+            [ChatMessage(role="user", content="test")],
+            max_tokens=800,
+        )
+    )
+    assert captured["payload"]["max_tokens"] == 800
+
+    captured.clear()
+    asyncio.run(client.chat([ChatMessage(role="user", content="test")]))
+    assert "max_tokens" not in captured["payload"]

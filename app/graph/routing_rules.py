@@ -302,21 +302,63 @@ def is_small_talk(
     return contains_any(text, rules.small_talk_keywords)
 
 
+# 已报名/已购课状态特征词（必须匹配"已"字头，避免误伤"考虑报名/准备进班/报名推进中"等未成交状态）。
+ENROLLED_MARKERS: tuple[str, ...] = (
+    "已报名", "已购买", "已购", "已缴费", "已交费", "已付费", "已付款", "已支付",
+    "已交定金", "已开通", "已激活", "已进班", "学习中",
+)
+
+# 新购买信号（已报名客户再次出现购买意图时的关键词，命中则仍按高意向转人工）。
+NEW_PURCHASE_SIGNAL_KEYWORDS: tuple[str, ...] = (
+    "付款", "支付", "缴费", "学费", "转账", "定金", "下单", "购买",
+    "报名", "链接", "二维码", "收款码", "微信", "支付宝",
+    "再报", "加报", "增报", "续费", "续报", "转介绍", "推荐给",
+)
+
+
+def customer_is_enrolled(profile: Any) -> bool:
+    """画像显示客户已报名/已购课。兼容 CustomerProfile 对象或 dict。"""
+    if not profile:
+        return False
+    value = (
+        profile.get("purchase_intent")
+        if isinstance(profile, dict)
+        else getattr(profile, "purchase_intent", "")
+    )
+    text = str(value or "").strip()
+    return any(marker in text for marker in ENROLLED_MARKERS)
+
+
+def has_new_purchase_signal(message: str) -> bool:
+    """消息中是否出现新的购买/付款/转介绍信号。"""
+    return contains_any(normalize_text(message), NEW_PURCHASE_SIGNAL_KEYWORDS)
+
+
 def intent_should_handover(
     intent: dict[str, Any],
     rules: RoutingRules = DEFAULT_ROUTING_RULES,
+    *,
+    message: str = "",
+    profile: Any = None,
 ) -> bool:
-    return bool(intent_handover_reasons(intent, rules))
+    return bool(intent_handover_reasons(intent, rules, message=message, profile=profile))
 
 
 def intent_handover_reasons(
     intent: dict[str, Any],
     rules: RoutingRules = DEFAULT_ROUTING_RULES,
+    *,
+    message: str = "",
+    profile: Any = None,
 ) -> list[str]:
     """返回意图识别触发转人工的确定性依据。
 
     该函数与 ``intent_should_handover`` 共用同一套规则，供正式链路在
     转人工时记录可追溯原因，避免只留下泛化的调度兜底文案。
+
+    已报名/已购课客户的日常跟进消息（学习进度、补课、资料、闲聊等）即使
+    被意图识别误判为 high_intent / 高购买意向，只要消息中不含新的购买信号
+    就不转人工，避免把已成交客户的日常沟通误甩给真人。
     """
     category = str(intent.get("intent_category") or "").lower()
     purchase_intent = str(intent.get("purchase_intent") or "").lower()
@@ -330,6 +372,14 @@ def intent_handover_reasons(
         reasons.append(f"购买意向={purchase_intent}")
     if emotion in rules.intent_handover_emotions:
         reasons.append(f"情绪={emotion}")
+    # 已报名客户兜底复核：仅过滤由意图类别/购买意向触发的理由，
+    # should_transfer 与情绪 impatient 触发的转人工不受影响。
+    if reasons and customer_is_enrolled(profile) and not has_new_purchase_signal(message):
+        reasons = [
+            reason
+            for reason in reasons
+            if not (reason.startswith("意图类别=") or reason.startswith("购买意向="))
+        ]
     return reasons
 
 

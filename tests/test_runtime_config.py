@@ -15,6 +15,9 @@ def test_windows_demo_defaults_to_postgresql() -> None:
     assert settings.llm_provider == "minimax"
     assert settings.database_connect_timeout_seconds == 5
     assert settings.evaluation_max_concurrency == 3
+    assert settings.llm_reasoning_budget_tokens == 4096
+    assert settings.llm_timeout_seconds == 90.0
+    assert settings.chat_request_timeout_seconds == 300.0
 
 
 def test_demo_mode_uses_local_llm() -> None:

@@ -22,6 +22,9 @@ class LLMProviderConfig:
     protocol: LLMProtocol
     timeout_seconds: float
     anthropic_version: str | None = None
+    # 推理模型（如 deepseek 推理版）的 reasoning token 预留预算：叠加到请求
+    # max_tokens 上；预算 >0 时，reasoning-only 响应还会触发同供应商放宽重试。
+    reasoning_budget_tokens: int = 0
 
 
 def build_llm_fallback_configs(settings: Settings) -> list[LLMProviderConfig]:
@@ -51,6 +54,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             ),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "minimax": _expand_provider_models(
             provider="minimax",
@@ -59,6 +63,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.minimax_models, settings.minimax_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "xiaomimimo": _expand_provider_models(
             provider="xiaomimimo",
@@ -70,6 +75,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             ),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "aliyun": _expand_provider_models(
             provider="aliyun",
@@ -78,6 +84,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.aliyun_models, settings.aliyun_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "siliconflow": _expand_provider_models(
             provider="siliconflow",
@@ -86,6 +93,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.siliconflow_models, settings.siliconflow_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "glm": _expand_provider_models(
             provider="glm",
@@ -94,6 +102,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.glm_models, settings.glm_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "deepseek": _expand_provider_models(
             provider="deepseek",
@@ -102,6 +111,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.deepseek_models, settings.deepseek_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "qwen": _expand_provider_models(
             provider="qwen",
@@ -110,6 +120,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.qwen_models, settings.qwen_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "chatgpt": _expand_provider_models(
             provider="chatgpt",
@@ -118,6 +129,7 @@ def _provider_config_map(settings: Settings) -> dict[str, list[LLMProviderConfig
             models=_split_models(settings.chatgpt_models, settings.chatgpt_model),
             protocol=LLMProtocol.openai_chat,
             timeout_seconds=settings.llm_timeout_seconds,
+            reasoning_budget_tokens=settings.llm_reasoning_budget_tokens,
         ),
         "claude": _expand_provider_models(
             provider="claude",
@@ -147,6 +159,7 @@ def _expand_provider_models(
     protocol: LLMProtocol,
     timeout_seconds: float,
     anthropic_version: str | None = None,
+    reasoning_budget_tokens: int = 0,
 ) -> list[LLMProviderConfig]:
     if not api_url or not api_key or not models:
         return []
@@ -159,6 +172,7 @@ def _expand_provider_models(
             protocol=protocol,
             timeout_seconds=timeout_seconds,
             anthropic_version=anthropic_version,
+            reasoning_budget_tokens=reasoning_budget_tokens,
         )
         for model in models
     ]

@@ -97,7 +97,12 @@ class HttpEmbeddingClient:
         headers: dict[str, str],
     ) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout_seconds) as client:
+            # trust_env=False：本项目 LLM/Embedding 供应商均为国内 API，必须直连，
+            # 不读环境变量代理。否则代理软件一关，请求会被强制发往本地代理端口导致
+            # ConnectionRefused。接入境外供应商时需另行显式配置代理。
+            async with httpx.AsyncClient(
+                timeout=self.config.timeout_seconds, trust_env=False
+            ) as client:
                 response = await client.post(api_url, headers=headers, json=payload)
                 response.raise_for_status()
                 return response.json()

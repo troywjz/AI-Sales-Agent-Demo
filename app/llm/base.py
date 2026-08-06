@@ -61,3 +61,22 @@ class LLMProviderError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.call_attempts = call_attempts or []
+
+
+class ReasoningTokenLimitExceeded(LLMProviderError):
+    """推理模型把 token 预算全部消耗在 reasoning 上，无可见输出。
+
+    通常是 ``finish_reason=length`` 且响应只含 reasoning_content 的场景。
+    由 FallbackLLMClient 识别并触发同供应商放宽 max_tokens 后重试一次。
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        finish_reason: str = "",
+        has_reasoning: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.finish_reason = finish_reason
+        self.has_reasoning = has_reasoning

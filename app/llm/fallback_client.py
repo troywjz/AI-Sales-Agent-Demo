@@ -7,6 +7,7 @@ from app.llm.base import (
     LLMClient,
     LLMProviderError,
     LLMResponse,
+    ReasoningTokenLimitExceeded,
 )
 from app.llm.http_client import HttpLLMClient
 from app.llm.providers import LLMProviderConfig
@@ -41,21 +42,50 @@ class FallbackLLMClient:
         if self.max_attempts is not None:
             attempts = attempts[: self.max_attempts]
 
-        request_json = _request_json(
-            messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format=response_format,
-        )
-        for attempt_index, (config, client) in enumerate(attempts, start=1):
+        # 每个供应商配置最多做一次"放宽 max_tokens"重试，用于推理模型把预算
+        # 全部消耗在 reasoning 上、无可见输出的场景；其余异常直接跳过。
+        retried = [False] * len(attempts)
+        attempt_index = 0
+        index = 0
+        while index < len(attempts):
+            config, client = attempts[index]
+            current_max_tokens = (
+                _relaxed_max_tokens(max_tokens, config) if retried[index] else max_tokens
+            )
+            attempt_index += 1
+            current_request_json = _request_json(
+                messages,
+                temperature=temperature,
+                max_tokens=current_max_tokens,
+                response_format=response_format,
+            )
             started = time.perf_counter()
             try:
                 response = await client.chat(
                     messages,
                     temperature=temperature,
-                    max_tokens=max_tokens,
+                    max_tokens=current_max_tokens,
                     response_format=response_format,
                 )
+            except ReasoningTokenLimitExceeded as exc:
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                call_attempts.append(
+                    _call_attempt(
+                        config,
+                        attempt_index=attempt_index,
+                        success=False,
+                        elapsed_ms=elapsed_ms,
+                        request_json=current_request_json,
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+                )
+                failures.append(f"{config.provider}/{config.model}: {exc}")
+                if not retried[index] and _relaxed_max_tokens(max_tokens, config) is not None:
+                    retried[index] = True
+                    continue
+                index += 1
+                continue
             except Exception as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
                 call_attempts.append(
@@ -64,12 +94,13 @@ class FallbackLLMClient:
                         attempt_index=attempt_index,
                         success=False,
                         elapsed_ms=elapsed_ms,
-                        request_json=request_json,
+                        request_json=current_request_json,
                         error_type=type(exc).__name__,
                         error_message=str(exc),
                     )
                 )
                 failures.append(f"{config.provider}/{config.model}: {exc}")
+                index += 1
                 continue
 
             elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -83,7 +114,7 @@ class FallbackLLMClient:
                             attempt_index=attempt_index,
                             success=False,
                             elapsed_ms=elapsed_ms,
-                            request_json=request_json,
+                            request_json=current_request_json,
                             response_json=response.raw_response,
                             usage=response.usage,
                             error_type=type(exc).__name__,
@@ -93,6 +124,7 @@ class FallbackLLMClient:
                     failures.append(
                         f"{config.provider}/{config.model}: invalid JSON response: {exc}"
                     )
+                    index += 1
                     continue
 
             call_attempts.append(
@@ -101,7 +133,7 @@ class FallbackLLMClient:
                     attempt_index=attempt_index,
                     success=True,
                     elapsed_ms=elapsed_ms,
-                    request_json=request_json,
+                    request_json=current_request_json,
                     response_json=response.raw_response,
                     usage=response.usage,
                 )
@@ -122,6 +154,21 @@ class FallbackLLMClient:
             f"All attempted LLM providers failed.{skipped_text} {failure_text}",
             call_attempts=call_attempts,
         )
+
+
+def _relaxed_max_tokens(
+    max_tokens: int | None,
+    config: LLMProviderConfig,
+) -> int | None:
+    """推理模型 reasoning-only 重试时放宽后的 max_tokens。
+
+    无推理预算配置（budget<=0）的供应商返回 None，表示不做同供应商放宽重试。
+    放宽值 = 2 倍基础上限 + 推理预算，并封顶 32768 防止超大请求。
+    """
+    budget = config.reasoning_budget_tokens or 0
+    if budget <= 0:
+        return None
+    return min((max_tokens or 1024) * 2 + budget, 32768)
 
 
 def _request_json(

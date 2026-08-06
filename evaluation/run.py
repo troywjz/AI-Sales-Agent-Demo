@@ -7,7 +7,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -17,7 +17,9 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from app.conversation import ConversationState
+from app.conversation.state import CustomerProfile
 from app.core.config import PROJECT_ROOT, Settings, get_settings
+from app.core.time import beijing_now
 from app.graph.service import GraphSessionStore, SalesGraphService
 from app.llm import DemoLLMClient, create_llm_client
 from evaluation.core.csv_logger import write_csv
@@ -123,14 +125,15 @@ async def run_evaluation(
         if isinstance(active_llm_client, DemoLLMClient)
         else "configured_model"
     )
-    actual_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    # 结果目录与运行信息使用东八区时间，与业务侧展示口径一致。
+    actual_run_id = run_id or beijing_now().strftime("%Y%m%dT%H%M%S%f+0800")
     root = Path(output_root or PROJECT_ROOT / "evaluation" / "results").resolve()
     run_dir = root / actual_run_id
     if run_dir.exists():
         raise FileExistsError(f"评测结果目录已存在：{run_dir}")
     run_dir.mkdir(parents=True, exist_ok=False)
 
-    started_at = datetime.now(timezone.utc)
+    started_at = beijing_now()
     max_concurrency = runtime_settings.evaluation_max_concurrency
     semaphore = asyncio.Semaphore(max_concurrency)
     snapshot_knowledge_loader = create_snapshot_knowledge_loader()
@@ -195,8 +198,8 @@ async def run_evaluation(
             {"字段": "正常回复", "值": succeeded},
             {"字段": "转人工", "值": handed_off},
             {"字段": "失败", "值": failed},
-            {"字段": "开始时间UTC", "值": started_at.isoformat()},
-            {"字段": "结束时间UTC", "值": datetime.now(timezone.utc).isoformat()},
+            {"字段": "开始时间(东八区)", "值": started_at.isoformat()},
+            {"字段": "结束时间(东八区)", "值": beijing_now().isoformat()},
         ],
     )
 
@@ -217,6 +220,34 @@ async def run_evaluation(
         blind_review_path=blind_review_path,
         blind_mapping_path=blind_mapping_path,
     )
+
+
+def _parse_memory_summary(memory_summary: str) -> tuple[str, CustomerProfile]:
+    """解析评测 CSV『上文总结的用户记忆』JSON，还原上文摘要与客户画像。
+
+    评测数据中该列是 {"history_summary": "...", "customer_profile": {...}} 结构的
+    JSON。正式环境从数据库恢复画像，评测环境应尽量还原同一状态，否则意图识别等
+    环节看不到客户的已报名状态。解析失败时回退为现状（整段文本 + 空画像）。
+    """
+    if not memory_summary:
+        return "", CustomerProfile()
+    try:
+        parsed = json.loads(memory_summary)
+    except (ValueError, TypeError):
+        return memory_summary, CustomerProfile()
+    if not isinstance(parsed, dict):
+        return memory_summary, CustomerProfile()
+    history = parsed.get("history_summary")
+    result_history = (
+        history if isinstance(history, str) and history.strip() else memory_summary
+    )
+    profile_data = parsed.get("customer_profile")
+    if isinstance(profile_data, dict):
+        try:
+            return result_history, CustomerProfile.model_validate(profile_data)
+        except Exception:
+            return result_history, CustomerProfile()
+    return result_history, CustomerProfile()
 
 
 async def _run_single_turn(
@@ -242,11 +273,13 @@ async def _run_single_turn(
             safety_vector_reviewer=safety_vector_reviewer,
         )
         session_id = _session_id(run_id, row.turn_id)
+        history_summary, customer_profile = _parse_memory_summary(row.memory_summary)
         session_store.save(
             ConversationState(
                 session_id=session_id,
                 customer_id=f"evaluation-{session_id[-16:]}",
-                history_summary=row.memory_summary,
+                customer_profile=customer_profile,
+                history_summary=history_summary,
             )
         )
         try:

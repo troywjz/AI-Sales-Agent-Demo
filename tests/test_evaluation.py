@@ -27,7 +27,11 @@ from evaluation.core.scoring import (
     SYSTEM_SOURCE,
     score_blind_review,
 )
-from evaluation.run import create_production_replay_service, run_evaluation
+from evaluation.run import (
+    _parse_memory_summary,
+    create_production_replay_service,
+    run_evaluation,
+)
 
 
 # 本文件中的 TEST_ONLY 内容只验证 CSV 回放，不是业务数据或业务结论。
@@ -85,6 +89,52 @@ class _ReadOnlyKnowledgeSession:
 
     def scalars(self, _statement):
         return _ReadOnlyScalarResult()
+
+
+def test_parse_memory_summary_extracts_history_and_profile() -> None:
+    memory = (
+        '{"history_summary":"客户已咨询价格",'
+        '"customer_profile":{"age":"30","purchase_intent":"已报名（四证班，已交100元定金）"},'
+        '"profile_updates":[]}'
+    )
+
+    history, profile = _parse_memory_summary(memory)
+
+    assert history == "客户已咨询价格"
+    assert profile.age == "30"
+    assert profile.purchase_intent == "已报名（四证班，已交100元定金）"
+
+
+def test_parse_memory_summary_falls_back_to_raw_text_when_not_json() -> None:
+    history, profile = _parse_memory_summary("TEST_ONLY 非 JSON 文本")
+
+    assert history == "TEST_ONLY 非 JSON 文本"
+    assert profile.purchase_intent == "low"
+
+
+def test_parse_memory_summary_handles_empty_string() -> None:
+    history, profile = _parse_memory_summary("")
+
+    assert history == ""
+    assert profile.purchase_intent == "low"
+
+
+def test_parse_memory_summary_falls_back_when_profile_is_not_dict() -> None:
+    memory = '{"history_summary":"摘要","customer_profile":"已报名"}'
+
+    history, profile = _parse_memory_summary(memory)
+
+    assert history == "摘要"
+    assert profile.purchase_intent == "low"
+
+
+def test_parse_memory_summary_keeps_raw_text_when_history_missing() -> None:
+    memory = '{"customer_profile":{"purchase_intent":"已报名"}}'
+
+    history, profile = _parse_memory_summary(memory)
+
+    assert history == memory
+    assert profile.purchase_intent == "已报名"
 
 
 def test_csv_dataset_requires_the_declared_first_four_columns(tmp_path: Path) -> None:

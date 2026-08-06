@@ -146,6 +146,9 @@ class SalesGraphNodes:
                 "history_summary": graph_state.get("history_summary", ""),
                 "current_stage": graph_state.get("current_stage", "开场"),
                 "knowledge_catalog": graph_state.get("knowledge_catalog", []),
+                "customer_profile": (
+                    graph_state.get("customer_profile") or CustomerProfile()
+                ).model_dump(),
             }
         )
         intent = _as_dict(run.output)
@@ -466,7 +469,11 @@ class SalesGraphNodes:
             safety.get("transfer_reason")
             or (sop.get("reason") if bool(sop.get("should_transfer")) else "")
             or _knowledge_transfer_reason(knowledge)
-            or _intent_transfer_reason(intent)
+            or _intent_transfer_reason(
+                intent,
+                message=graph_state.get("message", ""),
+                profile=graph_state.get("customer_profile"),
+            )
             or graph_state.get("transfer_reason")
             or "; ".join(supervisor.get("reasons") or [])
             or "需要人工跟进"
@@ -592,7 +599,11 @@ def route_after_intent(graph_state: SalesGraphState) -> str | list[str]:
     intent = graph_state.get("intent") or {}
     message = str(graph_state.get("message") or "")
 
-    if intent_should_handover(intent):
+    if intent_should_handover(
+        intent,
+        message=message,
+        profile=graph_state.get("customer_profile"),
+    ):
         return "handover"
     if intent_should_direct_reply(intent):
         return "conversation"
@@ -799,9 +810,14 @@ def _knowledge_transfer_reason(knowledge: dict[str, Any]) -> str:
     return "知识库信息不足，需要人工确认后回复"
 
 
-def _intent_transfer_reason(intent: dict[str, Any]) -> str:
+def _intent_transfer_reason(
+    intent: dict[str, Any],
+    *,
+    message: str = "",
+    profile: Any = None,
+) -> str:
     """生成意图识别触发转人工的可读原因。"""
-    reasons = intent_handover_reasons(intent)
+    reasons = intent_handover_reasons(intent, message=message, profile=profile)
     if not reasons:
         return ""
     return "意图识别触发转人工：" + "、".join(reasons)
