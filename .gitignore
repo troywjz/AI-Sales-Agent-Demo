@@ -39,6 +39,7 @@ evaluation/results/*
 
 # 开源演示目录不保留过程文档；Agent 提示词和 README 不受影响
 docs/
+tmp/
 !evaluation/docs/
 !evaluation/docs/README.md
 
