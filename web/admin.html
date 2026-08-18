@@ -58,21 +58,6 @@
         </div>
       </section>
 
-      <section class="panel admin-config-panel" aria-label="运行配置">
-        <header>
-          <div>
-            <h2>运行配置</h2>
-            <span id="adminConfigPath">仅显示可安全修改的配置</span>
-          </div>
-          <div class="config-actions">
-            <button id="saveConfigButton" type="button">保存配置</button>
-            <button id="restartServiceButton" type="button">重启服务</button>
-          </div>
-        </header>
-        <div id="adminConfigForm" class="config-grid"></div>
-        <p id="adminConfigStatus" class="config-status" aria-live="polite"></p>
-      </section>
-
       <section id="summaryCards" class="summary-grid" aria-label="核心指标"></section>
 
       <section class="dashboard-grid">
@@ -156,6 +141,21 @@
             <div id="ragRecentTable" class="table-box"></div>
           </article>
         </section>
+      </section>
+
+      <section class="panel admin-config-panel" aria-label="运行配置">
+        <header>
+          <div>
+            <h2>运行配置</h2>
+            <span id="adminConfigPath">仅显示可安全修改的配置</span>
+          </div>
+          <div class="config-actions">
+            <button id="saveConfigButton" type="button">保存配置</button>
+            <button id="restartServiceButton" type="button">重启服务</button>
+          </div>
+        </header>
+        <div id="adminConfigForm" class="config-grid"></div>
+        <p id="adminConfigStatus" class="config-status" aria-live="polite"></p>
       </section>
 
     </main>
