@@ -74,8 +74,21 @@ if [[ -f "$PID_FILE" ]]; then
     if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
         existing_command="$(ps -p "$existing_pid" -o args= 2>/dev/null || true)"
         if [[ "$existing_command" == *"$PROJECT_ROOT"* && "$existing_command" == *"-m app.main"* ]]; then
-            printf 'Sales Agent 已在运行，PID=%s，端口=%s。\n' "$existing_pid" "$APP_PORT"
-            exit 0
+            printf '检测到已运行的 Sales Agent（PID=%s），正在停止 ...\n' "$existing_pid"
+            kill "$existing_pid" 2>/dev/null || true
+            for _ in $(seq 1 30); do
+                kill -0 "$existing_pid" 2>/dev/null || break
+                sleep 1
+            done
+            if kill -0 "$existing_pid" 2>/dev/null; then
+                printf '进程未响应 SIGTERM，强制终止 ...\n'
+                kill -9 "$existing_pid" 2>/dev/null || true
+                for _ in $(seq 1 15); do
+                    kill -0 "$existing_pid" 2>/dev/null || break
+                    sleep 1
+                done
+            fi
+            printf '旧进程已停止，准备重启。\n'
         fi
     fi
     rm -f "$PID_FILE"

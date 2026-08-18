@@ -83,7 +83,9 @@ function showAdminLogin(message = "") {
   adminLayout.hidden = true;
   adminLoginError.textContent = message;
   adminLoginError.hidden = !message;
-  adminPassword.value = "";
+  if (message) {
+    adminPassword.value = "";
+  }
   adminUsername.focus();
 }
 

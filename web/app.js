@@ -2341,7 +2341,9 @@ function showSalesLogin(message = "") {
   appShell.hidden = true;
   salesLoginError.textContent = message;
   salesLoginError.hidden = !message;
-  salesLoginPassword.value = "";
+  if (message) {
+    salesLoginPassword.value = "";
+  }
   salesLoginEmail.focus();
 }
 
