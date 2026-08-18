@@ -36,6 +36,20 @@ Windows Demo 始终只连接独立的 `sales_agent_demo` 数据库，不要把 `
 
 按 `Ctrl+C` 停止服务。
 
+## CloudStudio / Ubuntu 云服务器快速运维
+
+云服务器使用 `ops/` 下的三个 Bash 脚本完成部署、启动和停止；脚本均从项目根目录解析路径，可以在 CloudStudio 终端或阿里云 Ubuntu 中执行：
+
+```bash
+bash ops/deploy.sh
+bash ops/start.sh
+bash ops/stop.sh
+```
+
+首次运行 `deploy.sh` 会创建 `.venv`、安装 `requirements.txt`、从 `.env.example` 创建本地 `.env`（不会覆盖已有 `.env`），创建或确认 `.env` 中指定的 PostgreSQL 数据库，初始化表结构，并按 `DEMO_SEED_DATA`、`KNOWLEDGE_AUTO_IMPORT` 开关导入演示数据和知识库。数据库账号需要具备连接维护库和 `CREATEDB` 权限；没有权限时请先手动建库。启动后的 PID 和日志保存在 `logs/ops/`，停止服务只处理由 `ops/start.sh` 启动且路径匹配当前项目的进程，数据库和日志会保留。
+
+云端部署前请在 `.env` 中填写 PostgreSQL 连接串、模型 API Key，并按环境设置 `APP_HOST`、`APP_PORT`、`DEMO_SEED_DATA`。部署账号需要能够连接 PostgreSQL 的 `postgres` 维护库并具备 `CREATEDB` 权限；如果使用托管 PostgreSQL、账号没有建库权限，请先手动创建 `.env` 中指定的数据库。`DEMO_SEED_DATA=true` 只适用于 `sales_agent_demo` 演示库，生产库应设置为 `false`。
+
 ## 推荐演示流程
 
 1. 打开管理员端，查看会话趋势、SOP 转化漏斗、Agent 表现和销售案例 RAG 效果。

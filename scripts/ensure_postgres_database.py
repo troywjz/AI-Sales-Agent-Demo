@@ -10,11 +10,16 @@ from app.core.config import get_settings
 
 
 def ensure_postgres_database() -> None:
-    """确保演示数据库存在，但绝不自动创建非 Demo 名称的数据库。"""
+    """确保 .env 指向的 PostgreSQL 数据库存在。
+
+    目标库不存在时，使用同一连接账号连接 PostgreSQL 的 ``postgres``
+    维护库并执行创建；因此部署账号需要具备连接维护库和 CREATEDB 权限。
+    已存在的数据库不会被覆盖、删除或清空。
+    """
     settings = get_settings()
     database_url = make_url(settings.database_url)
     if database_url.get_backend_name() != "postgresql":
-        raise RuntimeError("Windows Demo 仅支持 PostgreSQL。")
+        raise RuntimeError("当前服务仅支持 PostgreSQL。")
 
     database_name = database_url.database or ""
     if not database_name:
@@ -36,12 +41,8 @@ def ensure_postgres_database() -> None:
     finally:
         target_engine.dispose()
 
-    if database_name.lower() != "sales_agent_demo":
-        raise RuntimeError(
-            "目标 PostgreSQL 数据库不存在；Windows Demo 只允许自动创建 sales_agent_demo。"
-        )
     if not re.fullmatch(r"[A-Za-z0-9_]+", database_name):
-        raise RuntimeError("演示数据库名只能包含字母、数字和下划线。")
+        raise RuntimeError("PostgreSQL 数据库名只能包含字母、数字和下划线。")
 
     admin_url = database_url.set(database="postgres")
     admin_engine = create_engine(
@@ -61,7 +62,7 @@ def ensure_postgres_database() -> None:
     finally:
         admin_engine.dispose()
 
-    print(f"PostgreSQL demo database is ready: {database_name}")
+    print(f"PostgreSQL database is ready: {database_name}")
 
 
 if __name__ == "__main__":
