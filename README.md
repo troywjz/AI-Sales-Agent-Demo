@@ -48,6 +48,8 @@ bash ops/stop.sh
 
 首次运行 `deploy.sh` 会创建 `.venv`、安装 `requirements.txt`、从 `.env.example` 创建本地 `.env`（不会覆盖已有 `.env`），创建或确认 `.env` 中指定的 PostgreSQL 数据库，初始化表结构，并按 `DEMO_SEED_DATA`、`KNOWLEDGE_AUTO_IMPORT` 开关导入演示数据和知识库。数据库账号需要具备连接维护库和 `CREATEDB` 权限；没有权限时请先手动建库。启动后的 PID 和日志保存在 `logs/ops/`，停止服务只处理由 `ops/start.sh` 启动且路径匹配当前项目的进程，数据库和日志会保留。
 
+当 `DATABASE_URL` 指向 `127.0.0.1` 或 `localhost`，且存在名为 `sales-agent-postgres` 的 Docker 容器时，`bash ops/start.sh` 会先自动启动并等待该 PostgreSQL 容器就绪；连接远程 PostgreSQL 时不会启动 Docker。CloudStudio 重启同一工作空间后通常只需重新执行 `bash ops/start.sh`，首次部署或依赖变化时再运行 `bash ops/deploy.sh`。
+
 云端部署前请在 `.env` 中填写 PostgreSQL 连接串、模型 API Key，并按环境设置 `APP_HOST`、`APP_PORT`、`DEMO_SEED_DATA`。部署账号需要能够连接 PostgreSQL 的 `postgres` 维护库并具备 `CREATEDB` 权限；如果使用托管 PostgreSQL、账号没有建库权限，请先手动创建 `.env` 中指定的数据库。`DEMO_SEED_DATA=true` 只适用于 `sales_agent_demo` 演示库，生产库应设置为 `false`。
 
 ## 推荐演示流程

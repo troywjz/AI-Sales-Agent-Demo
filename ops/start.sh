@@ -36,6 +36,39 @@ APP_PORT="${APP_PORT:-8000}"
 
 mkdir -p "$RUNTIME_DIR"
 
+# CloudStudio 重启工作空间后，应用进程和本地 Docker 容器可能同时停止。
+# 仅当 DATABASE_URL 指向本机且已有约定名称的 PostgreSQL 容器时自动启动它；
+# 远程 PostgreSQL 或其他本机数据库服务不受影响，仍按正式环境连接方式处理。
+database_host="$($VENV_PYTHON -X utf8 -c '
+from sqlalchemy.engine import make_url
+from app.core.config import get_settings
+
+print(make_url(get_settings().database_url).host or "")
+')"
+if [[ "$database_host" == "127.0.0.1" || "$database_host" == "localhost" ]]; then
+    postgres_container="sales-agent-postgres"
+    if command -v docker >/dev/null 2>&1 \
+        && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -Fxq "$postgres_container"; then
+        if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -Fxq "$postgres_container"; then
+            printf '正在启动本地 PostgreSQL 容器 %s ...\n' "$postgres_container"
+            docker start "$postgres_container" >/dev/null \
+                || die "无法启动 PostgreSQL 容器 $postgres_container。"
+        fi
+
+        postgres_ready=false
+        for _ in $(seq 1 60); do
+            if docker exec "$postgres_container" pg_isready -q >/dev/null 2>&1; then
+                postgres_ready=true
+                break
+            fi
+            sleep 1
+        done
+        [[ "$postgres_ready" == true ]] \
+            || die "PostgreSQL 容器已启动但尚未就绪，请查看 docker logs $postgres_container。"
+        printf 'PostgreSQL 容器已就绪。\n'
+    fi
+fi
+
 if [[ -f "$PID_FILE" ]]; then
     existing_pid="$(cat "$PID_FILE")"
     if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
