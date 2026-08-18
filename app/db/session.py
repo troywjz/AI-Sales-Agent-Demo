@@ -11,12 +11,10 @@ from app.db.base import Base
 settings = get_settings()
 database_url = settings.database_url
 if not database_url.startswith("postgresql+"):
-    raise RuntimeError("Windows Demo 继续使用 PostgreSQL，请检查 DATABASE_URL。")
+    raise RuntimeError("当前服务仅支持 PostgreSQL，请检查 DATABASE_URL。")
 database_name = (make_url(database_url).database or "").lower()
-if database_name != "sales_agent_demo":
-    raise RuntimeError(
-        "Windows Demo 只能连接独立数据库 sales_agent_demo，禁止连接 Linux 生产数据库。"
-    )
+if not database_name:
+    raise RuntimeError("DATABASE_URL 缺少 PostgreSQL 数据库名。")
 
 engine = create_engine(
     database_url,
